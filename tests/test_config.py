@@ -1,5 +1,4 @@
 import os
-import pytest
 from koreadertohardcover.config import Config
 
 def test_load_env_vars():
