@@ -1,4 +1,5 @@
 import duckdb
+from typing import Optional
 
 
 class DatabaseManager:
