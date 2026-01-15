@@ -28,7 +28,7 @@ The integration follows a client-server pattern where the local CLI acts as a co
 
 ## API Integration Detail
 
-- **Authentication**: Bearer token via `HARDCOVER_API_KEY` in `.env`.
+- **Authentication**: Bearer token via `HARDCOVER_BEARER_TOKEN` in `.env`.
 - **Progress**: Always sent as a **percentage** to ensure compatibility across different editions.
 - **Status**: 
     - `reading` -> `Currently Reading`

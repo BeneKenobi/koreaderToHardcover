@@ -8,6 +8,7 @@ class Config:
         self.WEBDAV_URL = os.getenv("WEBDAV_URL")
         self.WEBDAV_USERNAME = os.getenv("WEBDAV_USERNAME")
         self.WEBDAV_PASSWORD = os.getenv("WEBDAV_PASSWORD")
+        self.HARDCOVER_BEARER_TOKEN = os.getenv("HARDCOVER_BEARER_TOKEN")
         
         webdav_path = os.getenv("WEBDAV_PATH", "")
         db_name = os.getenv("KOREADER_DB_PATH", "statistics.sqlite3")

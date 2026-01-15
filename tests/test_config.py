@@ -6,6 +6,7 @@ def test_load_env_vars():
     os.environ["WEBDAV_URL"] = "https://example.com/dav"
     os.environ["WEBDAV_USERNAME"] = "user"
     os.environ["WEBDAV_PASSWORD"] = "pass"
+    os.environ["HARDCOVER_BEARER_TOKEN"] = "token123"
     if "WEBDAV_PATH" in os.environ:
         del os.environ["WEBDAV_PATH"]
     
@@ -13,6 +14,7 @@ def test_load_env_vars():
     assert config.WEBDAV_URL == "https://example.com/dav"
     assert config.WEBDAV_USERNAME == "user"
     assert config.WEBDAV_PASSWORD == "pass"
+    assert config.HARDCOVER_BEARER_TOKEN == "token123"
     # Verify default
     assert config.KOREADER_DB_PATH == "statistics.sqlite3"
 
