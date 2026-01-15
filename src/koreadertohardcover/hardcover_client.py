@@ -2,6 +2,7 @@ import httpx
 from typing import List, Dict, Any, Optional
 from koreadertohardcover.config import Config
 
+
 class HardcoverClient:
     API_URL = "https://api.hardcover.app/v1/graphql"
 
@@ -9,20 +10,22 @@ class HardcoverClient:
         self.config = config
         if not config.HARDCOVER_BEARER_TOKEN:
             raise ValueError("HARDCOVER_BEARER_TOKEN is not set")
-        
+
         self.headers = {
             "Authorization": config.HARDCOVER_BEARER_TOKEN,
             "Content-Type": "application/json",
             "User-Agent": "curl/7.64.1",
         }
 
-    def _execute_query(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _execute_query(
+        self, query: str, variables: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         with httpx.Client() as client:
             try:
                 response = client.post(
                     self.API_URL,
                     json={"query": query, "variables": variables or {}},
-                    headers=self.headers
+                    headers=self.headers,
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -51,20 +54,22 @@ class HardcoverClient:
         }
         """
         data = self._execute_query(gql, {"query": query})
-        
+
         results = []
         for book in data.get("books", []):
             author_name = "Unknown"
             if book.get("contributions"):
                 author_name = book["contributions"][0]["author"]["name"]
-            
-            results.append({
-                "id": book["id"],
-                "title": book["title"],
-                "author_name": author_name,
-                "pages": book.get("pages"),
-                "canonical_id": book.get("canonical_id")
-            })
+
+            results.append(
+                {
+                    "id": book["id"],
+                    "title": book["title"],
+                    "author_name": author_name,
+                    "pages": book.get("pages"),
+                    "canonical_id": book.get("canonical_id"),
+                }
+            )
         return results
 
     def is_book_on_shelf(self, book_id: int) -> bool:
@@ -105,7 +110,7 @@ class HardcoverClient:
         }
         """
         data = self._execute_query(gql, {"title": title})
-        
+
         results = []
         me_data = data.get("me")
         if me_data and len(me_data) > 0:
@@ -114,16 +119,27 @@ class HardcoverClient:
                 author_name = "Unknown"
                 if book.get("contributions"):
                     author_name = book["contributions"][0]["author"]["name"]
-                
-                results.append({
-                    "id": book["id"],
-                    "title": book["title"],
-                    "author_name": author_name,
-                    "pages": book.get("pages")
-                })
+
+                results.append(
+                    {
+                        "id": book["id"],
+                        "title": book["title"],
+                        "author_name": author_name,
+                        "pages": book.get("pages"),
+                    }
+                )
         return results
 
-    def update_progress(self, book_id: str, percentage: float, status: str, seconds: int = 0, last_read_date: Any = None, start_date: Any = None, force: bool = False) -> bool:
+    def update_progress(
+        self,
+        book_id: str,
+        percentage: float,
+        status: str,
+        seconds: int = 0,
+        last_read_date: Any = None,
+        start_date: Any = None,
+        force: bool = False,
+    ) -> bool:
         """
         Updates the progress of a book on Hardcover.
         """
@@ -153,10 +169,10 @@ class HardcoverClient:
             }
             """
             info = self._execute_query(info_gql, {"book_id": b_id})
-            
+
             book_data = info.get("books_by_pk")
             total_pages = book_data.get("pages") if book_data else None
-            
+
             me_data = info.get("me", [])
             user_book = None
             if me_data and me_data[0].get("user_books"):
@@ -180,19 +196,30 @@ class HardcoverClient:
                     current_seconds = ubr_list[0].get("progress_seconds")
                     current_start = ubr_list[0].get("started_at")
                     current_finish = ubr_list[0].get("finished_at")
-            
+
             # Skip if status, page, seconds and dates match (allow small drift), unless forced
             if not force and user_book and current_status == status_id:
-                page_match = current_page is not None and abs(current_page - target_page) < 2
-                time_match = current_seconds is not None and abs((current_seconds or 0) - seconds) < 60 # Allow 1 min drift
-                
+                page_match = (
+                    current_page is not None and abs(current_page - target_page) < 2
+                )
+                time_match = (
+                    current_seconds is not None
+                    and abs((current_seconds or 0) - seconds) < 60
+                )  # Allow 1 min drift
+
                 # Date matches (comparing string YYYY-MM-DD)
                 target_start = start_date.strftime("%Y-%m-%d") if start_date else None
-                target_finish = last_read_date.strftime("%Y-%m-%d") if (status == "finished" and last_read_date) else None
-                
-                start_match = (current_start == target_start)
-                finish_match = (current_finish == target_finish) if status == "finished" else True
-                
+                target_finish = (
+                    last_read_date.strftime("%Y-%m-%d")
+                    if (status == "finished" and last_read_date)
+                    else None
+                )
+
+                start_match = current_start == target_start
+                finish_match = (
+                    (current_finish == target_finish) if status == "finished" else True
+                )
+
                 if page_match and time_match and start_match and finish_match:
                     print("  No changes needed (up to date).")
                     return True
@@ -206,7 +233,9 @@ class HardcoverClient:
                   }
                 }
                 """
-                res = self._execute_query(create_ub_gql, {"book_id": b_id, "status_id": status_id})
+                res = self._execute_query(
+                    create_ub_gql, {"book_id": b_id, "status_id": status_id}
+                )
                 ub_id = res["insert_user_book"]["id"]
                 ubr_id = None
             else:
@@ -239,20 +268,25 @@ class HardcoverClient:
               }
             }
             """
-            
+
             finished_at_str = None
             if status == "finished" and last_read_date:
                 finished_at_str = last_read_date.strftime("%Y-%m-%d")
-            
-            started_at_str = start_date.strftime("%Y-%m-%d") if start_date else current_start
 
-            self._execute_query(update_ubr_gql, {
-                "ubr_id": ubr_id, 
-                "pages": target_page if total_pages else current_page,
-                "seconds": seconds,
-                "started_at": started_at_str,
-                "finished_at": finished_at_str
-            })
+            started_at_str = (
+                start_date.strftime("%Y-%m-%d") if start_date else current_start
+            )
+
+            self._execute_query(
+                update_ubr_gql,
+                {
+                    "ubr_id": ubr_id,
+                    "pages": target_page if total_pages else current_page,
+                    "seconds": seconds,
+                    "started_at": started_at_str,
+                    "finished_at": finished_at_str,
+                },
+            )
 
             # 6. Update Status (if changed)
             if current_status != status_id:
@@ -263,7 +297,9 @@ class HardcoverClient:
                   }
                 }
                 """
-                self._execute_query(update_ub_gql, {"ub_id": ub_id, "status_id": status_id})
+                self._execute_query(
+                    update_ub_gql, {"ub_id": ub_id, "status_id": status_id}
+                )
 
             return True
         except Exception as e:

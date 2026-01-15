@@ -24,7 +24,7 @@ def test_ingestion_from_example(db_manager):
     # Run Import
     db_manager.import_books(sqlite_path)
     db_manager.import_sessions(sqlite_path)
-    
+
     conn = db_manager.get_connection()
 
     # Verify Books
