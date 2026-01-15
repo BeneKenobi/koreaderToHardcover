@@ -68,16 +68,18 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
                 hc = HardcoverClient(config)
                 mapper = InteractiveMapper(hc, db)
                 
-                # Fetch recent books
+                # Fetch recent books with start date
                 conn = db.get_connection()
                 recent_books = conn.execute("""
-                    SELECT id, title, authors, total_read_pages, total_pages, status, total_read_time
-                    FROM books
-                    ORDER BY last_open DESC
+                    SELECT 
+                        b.id, b.title, b.authors, b.total_read_pages, b.total_pages, b.status, b.total_read_time, b.last_open,
+                        (SELECT MIN(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as start_date
+                    FROM books b
+                    ORDER BY b.last_open DESC
                     LIMIT ?
                 """, [past]).fetchall()
                 
-                for b_id, title, authors, read_pg, total_pg, status, read_time in recent_books:
+                for b_id, title, authors, read_pg, total_pg, status, read_time, last_open, start_date in recent_books:
                     click.echo(f"\nProcessing \"{title}\"... ")
                     
                     # Mapping
@@ -90,7 +92,7 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
                     
                     # Sync
                     click.echo(f"  Updating Hardcover (Progress: {percentage:.1f}%, Time: {read_time}s, Status: {status})...")
-                    success = hc.update_progress(hc_id, percentage, status, seconds=read_time, force=force)
+                    success = hc.update_progress(hc_id, percentage, status, seconds=read_time, last_read_date=last_open, start_date=start_date, force=force)
                     
                     if success:
                         click.echo(click.style(f"  Successfully synced \"{title}\".", fg='green'))

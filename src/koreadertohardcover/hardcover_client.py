@@ -123,7 +123,7 @@ class HardcoverClient:
                 })
         return results
 
-    def update_progress(self, book_id: str, percentage: float, status: str, seconds: int = 0, force: bool = False) -> bool:
+    def update_progress(self, book_id: str, percentage: float, status: str, seconds: int = 0, last_read_date: Any = None, start_date: Any = None, force: bool = False) -> bool:
         """
         Updates the progress of a book on Hardcover.
         """
@@ -145,6 +145,8 @@ class HardcoverClient:
                     id
                     progress_pages
                     progress_seconds
+                    started_at
+                    finished_at
                   }
                 }
               }
@@ -169,18 +171,29 @@ class HardcoverClient:
             current_status = user_book.get("status_id") if user_book else None
             current_page = None
             current_seconds = None
+            current_start = None
+            current_finish = None
             if user_book:
                 ubr_list = user_book.get("user_book_reads", [])
                 if ubr_list:
                     current_page = ubr_list[0].get("progress_pages")
                     current_seconds = ubr_list[0].get("progress_seconds")
+                    current_start = ubr_list[0].get("started_at")
+                    current_finish = ubr_list[0].get("finished_at")
             
-            # Skip if status, page and seconds match (allow small drift), unless forced
+            # Skip if status, page, seconds and dates match (allow small drift), unless forced
             if not force and user_book and current_status == status_id:
                 page_match = current_page is not None and abs(current_page - target_page) < 2
                 time_match = current_seconds is not None and abs((current_seconds or 0) - seconds) < 60 # Allow 1 min drift
                 
-                if page_match and time_match:
+                # Date matches (comparing string YYYY-MM-DD)
+                target_start = start_date.strftime("%Y-%m-%d") if start_date else None
+                target_finish = last_read_date.strftime("%Y-%m-%d") if (status == "finished" and last_read_date) else None
+                
+                start_match = (current_start == target_start)
+                finish_match = (current_finish == target_finish) if status == "finished" else True
+                
+                if page_match and time_match and start_match and finish_match:
                     print("  No changes needed (up to date).")
                     return True
 
@@ -213,19 +226,32 @@ class HardcoverClient:
                 res = self._execute_query(create_ubr_gql, {"ub_id": ub_id})
                 ubr_id = res["insert_user_book_read"]["id"]
 
-            # 4. Update Progress (Pages & Seconds)
-            # We always update if we are here and have a UBR
+            # 4. Update Progress (Pages & Seconds & Dates)
             update_ubr_gql = """
-            mutation UpdateUBR($ubr_id: Int!, $pages: Int, $seconds: Int) {
-              update_user_book_read(id: $ubr_id, object: {progress_pages: $pages, progress_seconds: $seconds}) {
+            mutation UpdateUBR($ubr_id: Int!, $pages: Int, $seconds: Int, $started_at: date, $finished_at: date) {
+              update_user_book_read(id: $ubr_id, object: {
+                progress_pages: $pages, 
+                progress_seconds: $seconds, 
+                started_at: $started_at,
+                finished_at: $finished_at
+              }) {
                 id
               }
             }
             """
+            
+            finished_at_str = None
+            if status == "finished" and last_read_date:
+                finished_at_str = last_read_date.strftime("%Y-%m-%d")
+            
+            started_at_str = start_date.strftime("%Y-%m-%d") if start_date else current_start
+
             self._execute_query(update_ubr_gql, {
                 "ubr_id": ubr_id, 
                 "pages": target_page if total_pages else current_page,
-                "seconds": seconds
+                "seconds": seconds,
+                "started_at": started_at_str,
+                "finished_at": finished_at_str
             })
 
             # 6. Update Status (if changed)

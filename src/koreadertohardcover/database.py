@@ -63,8 +63,7 @@ class DatabaseManager:
                 start_time TIMESTAMP,
                 duration INTEGER, -- Seconds
                 total_pages INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (book_id) REFERENCES books(id)
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -79,8 +78,7 @@ class DatabaseManager:
                 isbn VARCHAR,
                 mapping_method VARCHAR,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (local_book_id) REFERENCES books(id)
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
 
@@ -107,6 +105,35 @@ class DatabaseManager:
 
         self._attach_koreader(sqlite_path)
         try:
+            # 1. Update existing books
+            self.conn.execute("""
+                UPDATE books
+                SET
+                    koreader_id = k.id,
+                    title = k.title,
+                    authors = k.authors,
+                    series = k.series,
+                    language = k.language,
+                    total_pages = k.pages,
+                    total_read_pages = k.total_read_pages,
+                    total_read_time = k.total_read_time,
+                    highlights = k.highlights,
+                    notes = k.notes,
+                    last_open = to_timestamp(k.last_open),
+                    status = CASE 
+                        WHEN k.pages > 0 AND (
+                            (CAST(k.total_read_pages AS FLOAT) / CAST(pages AS FLOAT)) >= 0.98 OR
+                            (k.pages - k.total_read_pages) <= 15
+                        ) THEN 'finished'
+                        ELSE 'reading'
+                    END,
+                    updated_at = now()
+                FROM koreader.book k
+                WHERE books.id = k.md5
+                AND k.md5 IS NOT NULL AND k.md5 != ''
+            """)
+
+            # 2. Insert new books
             self.conn.execute("""
                 INSERT INTO books (
                     id, koreader_id, title, authors, series, language, 
@@ -114,44 +141,31 @@ class DatabaseManager:
                     last_open, status, sync_status, created_at, updated_at
                 )
                 SELECT 
-                    md5 as id,
-                    id as koreader_id,
-                    title,
-                    authors,
-                    series,
-                    language,
-                    pages as total_pages,
-                    total_read_pages,
-                    total_read_time,
-                    highlights,
-                    notes,
-                    to_timestamp(last_open) as last_open,
+                    k.md5,
+                    k.id,
+                    k.title,
+                    k.authors,
+                    k.series,
+                    k.language,
+                    k.pages,
+                    k.total_read_pages,
+                    k.total_read_time,
+                    k.highlights,
+                    k.notes,
+                    to_timestamp(k.last_open),
                     CASE 
-                        WHEN pages > 0 AND (
-                            (CAST(total_read_pages AS FLOAT) / CAST(pages AS FLOAT)) >= 0.98 OR
-                            (pages - total_read_pages) <= 15
+                        WHEN k.pages > 0 AND (
+                            (CAST(k.total_read_pages AS FLOAT) / CAST(k.pages AS FLOAT)) >= 0.98 OR
+                            (k.pages - k.total_read_pages) <= 15
                         ) THEN 'finished'
                         ELSE 'reading'
-                    END as status,
-                    'pending' as sync_status,
-                    now() as created_at,
-                    now() as updated_at
-                FROM koreader.book
-                WHERE md5 IS NOT NULL AND md5 != ''
-                ON CONFLICT (id) DO UPDATE SET
-                    koreader_id = excluded.koreader_id,
-                    title = excluded.title,
-                    authors = excluded.authors,
-                    series = excluded.series,
-                    language = excluded.language,
-                    total_pages = excluded.total_pages,
-                    total_read_pages = excluded.total_read_pages,
-                    total_read_time = excluded.total_read_time,
-                    highlights = excluded.highlights,
-                    notes = excluded.notes,
-                    last_open = excluded.last_open,
-                    status = excluded.status,
-                    updated_at = now()
+                    END,
+                    'pending',
+                    now(),
+                    now()
+                FROM koreader.book k
+                WHERE k.md5 IS NOT NULL AND k.md5 != ''
+                AND NOT EXISTS (SELECT 1 FROM books b WHERE b.id = k.md5)
             """)
         finally:
             self._detach_koreader()
