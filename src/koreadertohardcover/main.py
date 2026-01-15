@@ -14,13 +14,18 @@ def cli():
 @click.argument('sqlite_path', type=click.Path(exists=True, dir_okay=False), required=False)
 @click.option('--db-path', default="reading_stats.duckdb", help="Path to local DuckDB database.")
 @click.option('--ingest-only', is_flag=True, help="Only ingest data from KOReader, do not sync to Hardcover.")
-def sync(sqlite_path, db_path, ingest_only):
+@click.option('--reset-db', is_flag=True, help="Clear the local database before syncing.")
+def sync(sqlite_path, db_path, ingest_only, reset_db):
     """
     Sync data from KOReader SQLite database to Hardcover.
     
     If SQLITE_PATH is provided, uses that local file.
     Otherwise, attempts to fetch the database via WebDAV using environment variables.
     """
+    if reset_db and os.path.exists(db_path):
+        click.echo(f"Resetting database: {db_path}")
+        os.remove(db_path)
+
     config = Config()
     using_temp_file = False
     

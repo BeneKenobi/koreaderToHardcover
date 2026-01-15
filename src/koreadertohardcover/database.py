@@ -125,7 +125,10 @@ class DatabaseManager:
                     highlights,
                     notes,
                     to_timestamp(last_open) as last_open,
-                    'reading' as status,
+                    CASE 
+                        WHEN pages > 0 AND (CAST(total_read_pages AS FLOAT) / CAST(pages AS FLOAT)) >= 0.98 THEN 'finished'
+                        ELSE 'reading'
+                    END as status,
                     'pending' as sync_status,
                     now() as created_at,
                     now() as updated_at
@@ -143,6 +146,7 @@ class DatabaseManager:
                     highlights = excluded.highlights,
                     notes = excluded.notes,
                     last_open = excluded.last_open,
+                    status = excluded.status,
                     updated_at = now()
             """)
         finally:
