@@ -15,7 +15,7 @@ def test_fetch_koreader_db(mock_client_cls, tmp_path):
     config.WEBDAV_USERNAME = "user"
     config.WEBDAV_PASSWORD = "pass"
     
-    remote_path = "metadata.sqlite3"
+    remote_path = "statistics.sqlite3"
     local_path = tmp_path / "downloaded.sqlite3"
     
     # Execute

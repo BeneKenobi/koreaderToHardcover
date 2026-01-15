@@ -12,7 +12,7 @@ def test_load_env_vars():
     assert config.WEBDAV_USERNAME == "user"
     assert config.WEBDAV_PASSWORD == "pass"
     # Verify default
-    assert config.KOREADER_DB_PATH == "metadata.sqlite3"
+    assert config.KOREADER_DB_PATH == "statistics.sqlite3"
 
 def test_missing_env_vars():
     # Clear specific env var if it exists
