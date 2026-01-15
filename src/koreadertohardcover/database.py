@@ -126,7 +126,10 @@ class DatabaseManager:
                     notes,
                     to_timestamp(last_open) as last_open,
                     CASE 
-                        WHEN pages > 0 AND (CAST(total_read_pages AS FLOAT) / CAST(pages AS FLOAT)) >= 0.98 THEN 'finished'
+                        WHEN pages > 0 AND (
+                            (CAST(total_read_pages AS FLOAT) / CAST(pages AS FLOAT)) >= 0.98 OR
+                            (pages - total_read_pages) <= 15
+                        ) THEN 'finished'
                         ELSE 'reading'
                     END as status,
                     'pending' as sync_status,
