@@ -14,14 +14,19 @@ def cli():
 @click.argument('sqlite_path', type=click.Path(exists=True, dir_okay=False), required=False)
 @click.option('--db-path', default="reading_stats.duckdb", help="Path to local DuckDB database.")
 @click.option('--ingest-only', is_flag=True, help="Only ingest data from KOReader, do not sync to Hardcover.")
-@click.option('--webdav', is_flag=True, help="Fetch KOReader database via WebDAV instead of local file.")
-def sync(sqlite_path, db_path, ingest_only, webdav):
-    """Sync data from KOReader SQLite database to Hardcover."""
-    config = Config()
+def sync(sqlite_path, db_path, ingest_only):
+    """
+    Sync data from KOReader SQLite database to Hardcover.
     
-    if webdav:
+    If SQLITE_PATH is provided, uses that local file.
+    Otherwise, attempts to fetch the database via WebDAV using environment variables.
+    """
+    config = Config()
+    using_temp_file = False
+    
+    if not sqlite_path:
         if not config.WEBDAV_URL:
-            raise click.ClickException("WebDAV sync requested but WEBDAV_URL is not set in environment.")
+            raise click.ClickException("No local file provided and WEBDAV_URL is not set in environment.")
         
         # Create a temp file to download the database to
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".sqlite3")
@@ -31,12 +36,11 @@ def sync(sqlite_path, db_path, ingest_only, webdav):
             click.echo(f"Fetching database from WebDAV: {config.WEBDAV_URL}...")
             fetch_koreader_db(config, tmp_path)
             sqlite_path = tmp_path
+            using_temp_file = True
         except Exception as e:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
             raise click.ClickException(f"Failed to fetch database from WebDAV: {e}")
-    elif not sqlite_path:
-        raise click.UsageError("Missing argument 'SQLITE_PATH' or use --webdav flag.")
 
     db = DatabaseManager(db_path)
     
@@ -71,7 +75,7 @@ def sync(sqlite_path, db_path, ingest_only, webdav):
         click.echo(click.style(f"Error during sync: {e}", fg='red'), err=True)
     finally:
         db.close()
-        if webdav and sqlite_path and os.path.exists(sqlite_path):
+        if using_temp_file and sqlite_path and os.path.exists(sqlite_path):
             os.remove(sqlite_path)
 
 if __name__ == '__main__':
