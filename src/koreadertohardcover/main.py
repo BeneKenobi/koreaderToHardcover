@@ -18,7 +18,8 @@ def cli():
 @click.option('--ingest-only', is_flag=True, help="Only ingest data from KOReader, do not sync to Hardcover.")
 @click.option('--reset-db', is_flag=True, help="Clear the local database before syncing.")
 @click.option('--past', default=2, help="Number of recently read books to sync to Hardcover.")
-def sync(sqlite_path, db_path, ingest_only, reset_db, past):
+@click.option('--force', is_flag=True, help="Force update even if progress/status matches Hardcover.")
+def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
     """
     Sync data from KOReader SQLite database to Hardcover.
     
@@ -30,6 +31,7 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past):
         os.remove(db_path)
 
     config = Config()
+    using_temp_file = False
     
     if not sqlite_path:
         if not config.WEBDAV_URL:
@@ -43,6 +45,7 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past):
             click.echo(f"Fetching database from WebDAV: {config.WEBDAV_URL}...")
             fetch_koreader_db(config, tmp_path)
             sqlite_path = tmp_path
+            using_temp_file = True
         except Exception as e:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
@@ -68,14 +71,14 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past):
                 # Fetch recent books
                 conn = db.get_connection()
                 recent_books = conn.execute("""
-                    SELECT id, title, authors, total_read_pages, total_pages, status
+                    SELECT id, title, authors, total_read_pages, total_pages, status, total_read_time
                     FROM books
                     ORDER BY last_open DESC
                     LIMIT ?
                 """, [past]).fetchall()
                 
-                for b_id, title, authors, read_pg, total_pg, status in recent_books:
-                    click.echo(f"\nProcessing \"{title}\"...")
+                for b_id, title, authors, read_pg, total_pg, status, read_time in recent_books:
+                    click.echo(f"\nProcessing \"{title}\"... ")
                     
                     # Mapping
                     hc_id = mapper.map_book(b_id, title, authors)
@@ -86,8 +89,8 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past):
                     percentage = (read_pg / total_pg * 100) if total_pg > 0 else 0
                     
                     # Sync
-                    click.echo(f"  Updating Hardcover (Progress: {percentage:.1f}%, Status: {status})...")
-                    success = hc.update_progress(hc_id, percentage, status)
+                    click.echo(f"  Updating Hardcover (Progress: {percentage:.1f}%, Time: {read_time}s, Status: {status})...")
+                    success = hc.update_progress(hc_id, percentage, status, seconds=read_time, force=force)
                     
                     if success:
                         click.echo(click.style(f"  Successfully synced \"{title}\".", fg='green'))
@@ -104,12 +107,11 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past):
     finally:
         db.close()
         # Clean up temp file if we created one
-        if not sqlite_path.startswith('/') or 'tmp' in sqlite_path: # Heuristic check if it's our temp path
-             if os.path.exists(sqlite_path):
-                 try:
-                     os.remove(sqlite_path)
-                 except Exception:
-                     pass
+        if using_temp_file and sqlite_path and os.path.exists(sqlite_path):
+             try:
+                 os.remove(sqlite_path)
+             except:
+                 pass
 
 if __name__ == '__main__':
     cli()
