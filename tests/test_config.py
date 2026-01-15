@@ -27,9 +27,12 @@ def test_webdav_path_combination():
 
 def test_missing_env_vars():
     # Clear env vars
-    if "WEBDAV_URL" in os.environ: del os.environ["WEBDAV_URL"]
-    if "WEBDAV_PATH" in os.environ: del os.environ["WEBDAV_PATH"]
-    if "KOREADER_DB_PATH" in os.environ: del os.environ["KOREADER_DB_PATH"]
+    if "WEBDAV_URL" in os.environ:
+        del os.environ["WEBDAV_URL"]
+    if "WEBDAV_PATH" in os.environ:
+        del os.environ["WEBDAV_PATH"]
+    if "KOREADER_DB_PATH" in os.environ:
+        del os.environ["KOREADER_DB_PATH"]
     
     config = Config()
     assert config.WEBDAV_URL is None

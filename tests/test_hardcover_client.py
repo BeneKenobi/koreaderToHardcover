@@ -16,15 +16,6 @@ def client(config):
 
 @respx.mock
 def test_search_books(client):
-    mock_query = """
-    query SearchBooks($query: String!) {
-      books(where: {title: {_ilike: $query}}) {
-        id
-        title
-        author_name
-      }
-    }
-    """
     respx.post("https://api.hardcover.app/v1/graphql").mock(return_value=Response(200, json={
         "data": {
             "books": [

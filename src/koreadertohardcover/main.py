@@ -4,55 +4,6 @@ import tempfile
 from koreadertohardcover.database import DatabaseManager
 from koreadertohardcover.config import Config
 from koreadertohardcover.webdav_client import fetch_koreader_db
-
-@click.group()
-def cli():
-    """KOReader to Hardcover sync tool."""
-    pass
-
-@cli.command()
-@click.argument('sqlite_path', type=click.Path(exists=True, dir_okay=False), required=False)
-@click.option('--db-path', default="reading_stats.duckdb", help="Path to local DuckDB database.")
-@click.option('--ingest-only', is_flag=True, help="Only ingest data from KOReader, do not sync to Hardcover.")
-@click.option('--reset-db', is_flag=True, help="Clear the local database before syncing.")
-def sync(sqlite_path, db_path, ingest_only, reset_db):
-    """
-    Sync data from KOReader SQLite database to Hardcover.
-    
-    If SQLITE_PATH is provided, uses that local file.
-    Otherwise, attempts to fetch the database via WebDAV using environment variables.
-    """
-    if reset_db and os.path.exists(db_path):
-        click.echo(f"Resetting database: {db_path}")
-        os.remove(db_path)
-
-    config = Config()
-    using_temp_file = False
-    
-    if not sqlite_path:
-        if not config.WEBDAV_URL:
-            raise click.ClickException("No local file provided and WEBDAV_URL is not set in environment.")
-        
-        # Create a temp file to download the database to
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".sqlite3")
-        os.close(tmp_fd)
-        
-        try:
-            click.echo(f"Fetching database from WebDAV: {config.WEBDAV_URL}...")
-            fetch_koreader_db(config, tmp_path)
-            sqlite_path = tmp_path
-            using_temp_file = True
-        except Exception as e:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-            raise click.ClickException(f"Failed to fetch database from WebDAV: {e}")
-
-import click
-import os
-import tempfile
-from koreadertohardcover.database import DatabaseManager
-from koreadertohardcover.config import Config
-from koreadertohardcover.webdav_client import fetch_koreader_db
 from koreadertohardcover.hardcover_client import HardcoverClient
 from koreadertohardcover.mapping import InteractiveMapper
 
@@ -79,7 +30,6 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past):
         os.remove(db_path)
 
     config = Config()
-    using_temp_file = False
     
     if not sqlite_path:
         if not config.WEBDAV_URL:
@@ -93,7 +43,6 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past):
             click.echo(f"Fetching database from WebDAV: {config.WEBDAV_URL}...")
             fetch_koreader_db(config, tmp_path)
             sqlite_path = tmp_path
-            using_temp_file = True
         except Exception as e:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
@@ -154,8 +103,13 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past):
         click.echo(click.style(f"Error during sync: {e}", fg='red'), err=True)
     finally:
         db.close()
-        if using_temp_file and sqlite_path and os.path.exists(sqlite_path):
-            os.remove(sqlite_path)
+        # Clean up temp file if we created one
+        if not sqlite_path.startswith('/') or 'tmp' in sqlite_path: # Heuristic check if it's our temp path
+             if os.path.exists(sqlite_path):
+                 try:
+                     os.remove(sqlite_path)
+                 except Exception:
+                     pass
 
 if __name__ == '__main__':
     cli()

@@ -20,7 +20,6 @@ class InteractiveMapper:
         click.echo(click.style(f"\nNo mapping found for: \"{title}\" by {author}", fg='yellow'))
         
         # 2. Search Hardcover
-        query = f"{title} {author}"
         results = self.client.search_books(title) # Search by title primarily
         
         if not results:
