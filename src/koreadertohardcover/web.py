@@ -1,4 +1,13 @@
-from fastapi import FastAPI, Request, Form, BackgroundTasks
+from fastapi import (
+    FastAPI,
+    Request,
+    Form,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    status,
+)
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
@@ -41,6 +50,32 @@ sync_status = {
 # Scheduler
 scheduler = BackgroundScheduler()
 
+# Security
+security = HTTPBasic()
+
+
+def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
+    """Verify Basic Auth credentials."""
+    current_username_bytes = credentials.username.encode("utf8")
+    correct_username_bytes = os.getenv("APP_USERNAME", "admin").encode("utf8")
+    is_correct_username = secrets.compare_digest(
+        current_username_bytes, correct_username_bytes
+    )
+
+    current_password_bytes = credentials.password.encode("utf8")
+    correct_password_bytes = os.getenv("APP_PASSWORD", "admin").encode("utf8")
+    is_correct_password = secrets.compare_digest(
+        current_password_bytes, correct_password_bytes
+    )
+
+    if not (is_correct_username and is_correct_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials.username
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,7 +98,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, dependencies=[Depends(get_current_username)])
 app.add_middleware(
     SessionMiddleware, secret_key=os.getenv("SECRET_KEY", secrets.token_hex(32))
 )
