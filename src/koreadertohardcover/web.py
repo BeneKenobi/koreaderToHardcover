@@ -25,6 +25,13 @@ templates = Jinja2Templates(
     directory=os.path.join(os.path.dirname(__file__), "templates")
 )
 
+# Global Sync Status
+sync_status = {
+    "state": "idle",  # idle, running
+    "last_run": None,
+    "last_result": None,
+}
+
 # Scheduler
 scheduler = BackgroundScheduler()
 
@@ -55,12 +62,27 @@ app = FastAPI(lifespan=lifespan)
 # --- Helpers ---
 
 
+import datetime
+
+
 def scheduled_sync():
     """Background task to ingest and sync."""
+    global sync_status
+    sync_status["state"] = "running"
+
     logger.info("Running scheduled sync...")
-    if config.WEBDAV_URL:
-        engine.ingest_from_webdav()
-    engine.sync_progress(limit=20)
+    try:
+        if config.WEBDAV_URL:
+            engine.ingest_from_webdav()
+        engine.sync_progress(limit=20)
+        sync_status["last_result"] = "Success"
+    except Exception as e:
+        logger.error(f"Sync failed: {e}")
+        sync_status["last_result"] = f"Error: {str(e)}"
+    finally:
+        sync_status["state"] = "idle"
+        sync_status["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     logger.info("Scheduled sync complete.")
 
 
@@ -131,6 +153,7 @@ async def dashboard(
             "total_count": total_count,
             "message": message,
             "message_type": message_type,
+            "sync_status": sync_status,
         },
     )
 

@@ -7,6 +7,25 @@
         <p>Books from your KOReader statistics database.</p>
     </div>
     <div class="column text-right">
+        <div class="card" style="padding: 1rem; display: inline-block; text-align: left;">
+            <p style="margin-bottom: 0;"><strong>Sync Status:</strong> 
+                {% if sync_status.state == 'running' %}
+                    <span class="badge badge-warning">Running...</span>
+                {% else %}
+                    <span class="badge badge-neutral">Idle</span>
+                {% endif %}
+            </p>
+            {% if sync_status.last_run %}
+                <p style="margin-bottom: 0; font-size: 0.8em; color: var(--rp-subtle);">Last Run: {{ sync_status.last_run }}</p>
+                <p style="margin-bottom: 0; font-size: 0.8em;">Result: 
+                    {% if 'Error' in sync_status.last_result|string %}
+                        <span style="color: var(--rp-love);">{{ sync_status.last_result }}</span>
+                    {% else %}
+                        <span style="color: var(--rp-pine);">{{ sync_status.last_result }}</span>
+                    {% endif %}
+                </p>
+            {% endif %}
+        </div>
         <p>Total Books: <strong>{{ total_count }}</strong></p>
     </div>
 </div>
