@@ -1,6 +1,5 @@
 import click
 import os
-import tempfile
 from rich.console import Console
 from rich.table import Table
 from koreadertohardcover.database import DatabaseManager

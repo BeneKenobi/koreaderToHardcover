@@ -1,7 +1,7 @@
 import os
 import tempfile
 import logging
-from typing import Optional, List, Tuple
+from typing import List, Tuple
 from koreadertohardcover.database import DatabaseManager
 from koreadertohardcover.config import Config
 from koreadertohardcover.webdav_client import fetch_koreader_db

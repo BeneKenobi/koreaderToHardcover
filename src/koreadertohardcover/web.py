@@ -1,11 +1,13 @@
 from fastapi import FastAPI, Request, Form, BackgroundTasks
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
+from starlette.middleware.sessions import SessionMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 import os
 import logging
 import datetime
+import secrets
 
 from koreadertohardcover.engine import SyncEngine
 from koreadertohardcover.config import Config
@@ -62,6 +64,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    SessionMiddleware, secret_key=os.getenv("SECRET_KEY", secrets.token_hex(32))
+)
 
 # --- Helpers ---
 
@@ -91,10 +96,11 @@ def scheduled_sync():
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(
-    request: Request, page: int = 1, message: str = None, message_type: str = None
-):
+async def dashboard(request: Request, page: int = 1):
     """Main Dashboard."""
+    message = request.session.pop("message", None)
+    message_type = request.session.pop("message_type", None)
+
     limit = 10
     offset = (page - 1) * limit
 
@@ -160,12 +166,12 @@ async def dashboard(
 
 
 @app.post("/sync")
-async def trigger_sync(background_tasks: BackgroundTasks):
+async def trigger_sync(request: Request, background_tasks: BackgroundTasks):
     """Manual Sync Trigger."""
     background_tasks.add_task(scheduled_sync)
-    return RedirectResponse(
-        url="/?message=Sync+started+in+background&message_type=success", status_code=303
-    )
+    request.session["message"] = "Sync started in background"
+    request.session["message_type"] = "success"
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/logs", response_class=HTMLResponse)
@@ -194,9 +200,9 @@ async def map_book_ui(request: Request, book_id: str):
     ).fetchone()
 
     if not book:
-        return RedirectResponse(
-            url="/?message=Book+not+found&message_type=error", status_code=303
-        )
+        request.session["message"] = "Book not found"
+        request.session["message_type"] = "error"
+        return RedirectResponse(url="/", status_code=303)
 
     book_obj = {
         "id": book_id,
@@ -276,6 +282,7 @@ async def map_book_select(
 
 @app.post("/map/{book_id}/confirm")
 async def map_book_confirm(
+    request: Request,
     book_id: str,
     hardcover_id: str = Form(...),
     title: str = Form(...),
@@ -284,6 +291,6 @@ async def map_book_confirm(
 ):
     """Save the mapping."""
     engine.db.save_book_mapping(book_id, hardcover_id, edition_id, title, author)
-    return RedirectResponse(
-        url="/?message=Book+mapped+successfully&message_type=success", status_code=303
-    )
+    request.session["message"] = "Book mapped successfully"
+    request.session["message_type"] = "success"
+    return RedirectResponse(url="/", status_code=303)
