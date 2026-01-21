@@ -11,6 +11,7 @@ services:
       - HARDCOVER_BEARER_TOKEN=${HARDCOVER_BEARER_TOKEN}
       - SYNC_INTERVAL_MINUTES=60
       - DB_PATH=/data/reading_stats.duckdb
+      - LOG_PATH=/data/app.log
       - APP_USERNAME=${APP_USERNAME:-admin}
       - APP_PASSWORD=${APP_PASSWORD:-admin}
     volumes:

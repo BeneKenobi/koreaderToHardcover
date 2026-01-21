@@ -24,12 +24,20 @@ from koreadertohardcover.hardcover_client import HardcoverClient
 
 # Configure Logging
 log_path = os.getenv("LOG_PATH", "app.log")
+file_handler = logging.FileHandler(log_path, mode="a")
+file_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler(log_path, mode="a")],
+    handlers=[logging.StreamHandler(), file_handler],
 )
 logger = logging.getLogger("web")
+
+# Attach file handler to Uvicorn loggers to capture server logs in the file
+logging.getLogger("uvicorn").addHandler(file_handler)
+logging.getLogger("uvicorn.access").addHandler(file_handler)
 
 # Globals
 config = Config()
