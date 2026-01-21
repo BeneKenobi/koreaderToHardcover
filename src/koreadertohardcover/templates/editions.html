@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Select Edition for: {{ title }}</h2>
+<p class="mb-2">Local Pages: {{ local_pages }}</p>
+
+{% if editions %}
+    <div class="card">
+        <table>
+            <thead>
+                <tr>
+                    <th>Format</th>
+                    <th>Language</th>
+                    <th>Pages</th>
+                    <th>Released</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for edition in editions %}
+                <tr>
+                    <td>{{ edition.edition_format or 'Unknown' }}</td>
+                    <td>{{ edition.language or 'Unknown' }}</td>
+                    <td>
+                        {% if edition.pages %}
+                            {% set diff = (edition.pages - local_pages) | abs %}
+                            {% if diff < 10 %}
+                                <span style="color: var(--rp-pine); font-weight: bold;">{{ edition.pages }}</span>
+                            {% else %}
+                                {{ edition.pages }}
+                            {% endif %}
+                        {% else %}
+                            ?
+                        {% endif %}
+                    </td>
+                    <td>{{ edition.release_date or '?' }}</td>
+                    <td>
+                        <form method="post" action="/map/{{ book_id }}/confirm">
+                            <input type="hidden" name="hardcover_id" value="{{ hardcover_id }}">
+                            <input type="hidden" name="edition_id" value="{{ edition.id }}">
+                            <input type="hidden" name="title" value="{{ title }}">
+                            <input type="hidden" name="author" value="{{ author }}">
+                            <button type="submit" class="button button-small">Select</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+{% else %}
+    <div class="alert alert-warning">No editions found.</div>
+{% endif %}
+
+<div class="card">
+    <h4>Generic Mapping</h4>
+    <p>Map to the book without a specific edition.</p>
+    <form method="post" action="/map/{{ book_id }}/confirm">
+        <input type="hidden" name="hardcover_id" value="{{ hardcover_id }}">
+        <input type="hidden" name="title" value="{{ title }}">
+        <input type="hidden" name="author" value="{{ author }}">
+        <button type="submit" class="button">Use Generic Book</button>
+    </form>
+</div>
+
+<a href="/map/{{ book_id }}" class="button button-outline mt-2">Back to Search</a>
+{% endblock %}

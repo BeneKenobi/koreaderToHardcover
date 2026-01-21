@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}KOReader to Hardcover{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/milligram/1.4.1/milligram.min.css">
+    <style>
+        :root {
+            --rp-base: #232136;
+            --rp-surface: #2a273f;
+            --rp-overlay: #393552;
+            --rp-muted: #6e6a86;
+            --rp-subtle: #908caa;
+            --rp-text: #e0def4;
+            --rp-love: #eb6f92;
+            --rp-gold: #f6c177;
+            --rp-rose: #ea9a97;
+            --rp-pine: #3e8fb0;
+            --rp-foam: #9ccfd8;
+            --rp-iris: #c4a7e7;
+            --rp-highlight-low: #2a283e;
+            --rp-highlight-med: #44415a;
+            --rp-highlight-high: #56526e;
+        }
+
+        body {
+            background-color: var(--rp-base);
+            color: var(--rp-text);
+            font-family: 'Roboto', 'Helvetica Neue', 'Helvetica', 'Arial', sans-serif;
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            color: var(--rp-rose);
+        }
+
+        a {
+            color: var(--rp-foam);
+        }
+        
+        a:hover {
+            color: var(--rp-iris);
+        }
+
+        .container {
+            max-width: 112.0rem;
+            padding: 2rem;
+        }
+
+        /* Milligram Overrides for Dark Mode */
+        .button, button, input[type='button'], input[type='reset'], input[type='submit'] {
+            background-color: var(--rp-highlight-med);
+            border-color: var(--rp-highlight-med);
+            color: var(--rp-text);
+        }
+
+        .button:hover, button:hover, input[type='button']:hover, input[type='reset']:hover, input[type='submit']:hover {
+            background-color: var(--rp-highlight-high);
+            border-color: var(--rp-highlight-high);
+            color: var(--rp-text);
+        }
+
+        .button.button-outline, button.button-outline, input[type='button'].button-outline, input[type='reset'].button-outline, input[type='submit'].button-outline {
+            color: var(--rp-foam);
+            border-color: var(--rp-foam);
+            background-color: transparent;
+        }
+        
+        .button.button-outline:hover, button.button-outline:hover, input[type='button'].button-outline:hover, input[type='reset'].button-outline:hover, input[type='submit'].button-outline:hover {
+            color: var(--rp-text);
+            border-color: var(--rp-iris);
+            background-color: var(--rp-highlight-low);
+        }
+        
+        input[type='text'], input[type='password'], input[type='email'], input[type='number'], input[type='search'], input[type='url'], textarea, select {
+            background-color: var(--rp-surface);
+            border: 0.1rem solid var(--rp-overlay);
+            color: var(--rp-text);
+        }
+
+        input[type='text']:focus, input[type='password']:focus, input[type='email']:focus, input[type='number']:focus, input[type='search']:focus, input[type='url']:focus, textarea:focus, select:focus {
+            border-color: var(--rp-iris);
+        }
+        
+        table {
+            color: var(--rp-text);
+        }
+        
+        th {
+            color: var(--rp-subtle);
+            border-bottom: 0.1rem solid var(--rp-overlay);
+        }
+        
+        td {
+            border-bottom: 0.1rem solid var(--rp-surface);
+        }
+
+        hr {
+            border-top: 0.1rem solid var(--rp-overlay);
+        }
+
+        /* Custom Utils */
+        .card {
+            background-color: var(--rp-surface);
+            padding: 2rem;
+            border-radius: 0.4rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--rp-overlay);
+        }
+
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        .mt-2 { margin-top: 2rem; }
+        .mb-2 { margin-bottom: 2rem; }
+
+        .badge {
+            display: inline-block;
+            padding: 0.2rem 0.8rem;
+            border-radius: 0.4rem;
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+        .badge-success { background-color: var(--rp-pine); color: var(--rp-base); }
+        .badge-warning { background-color: var(--rp-gold); color: var(--rp-base); }
+        .badge-error { background-color: var(--rp-love); color: var(--rp-base); }
+        .badge-neutral { background-color: var(--rp-overlay); color: var(--rp-text); }
+
+        .nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 3rem;
+            border-bottom: 1px solid var(--rp-overlay);
+            padding-bottom: 1rem;
+        }
+        
+        .nav-title {
+            font-size: 2.4rem;
+            font-weight: bold;
+            color: var(--rp-iris);
+            text-decoration: none;
+        }
+
+        .alert {
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border-radius: 0.4rem;
+        }
+        .alert-success { background-color: rgba(62, 143, 176, 0.2); border: 1px solid var(--rp-pine); }
+        .alert-error { background-color: rgba(235, 111, 146, 0.2); border: 1px solid var(--rp-love); }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="nav">
+            <a href="/" class="nav-title">KOReader → Hardcover</a>
+            <div>
+                <a href="/" class="button button-outline">Dashboard</a>
+                <form action="/sync" method="post" style="display: inline;">
+                    <button type="submit" class="button">Sync Now</button>
+                </form>
+            </div>
+        </nav>
+
+        {% if message %}
+        <div class="alert alert-{{ message_type or 'neutral' }}">
+            {{ message }}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

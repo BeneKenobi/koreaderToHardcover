@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row">
+    <div class="column">
+        <h2>Local Library</h2>
+        <p>Books from your KOReader statistics database.</p>
+    </div>
+    <div class="column text-right">
+        <p>Total Books: <strong>{{ total_count }}</strong></p>
+    </div>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Title</th>
+                <th>Author</th>
+                <th>Progress</th>
+                <th>Last Read</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for book in books %}
+            <tr>
+                <td><strong>{{ book.title }}</strong></td>
+                <td>{{ book.author }}</td>
+                <td>
+                    {% if book.total_pages > 0 %}
+                        {{ (book.read_pages / book.total_pages * 100) | round(1) }}%
+                    {% else %}
+                        0%
+                    {% endif %}
+                </td>
+                <td>{{ book.last_read }}</td>
+                <td>
+                    {% if book.is_mapped %}
+                        <span class="badge badge-success">Mapped</span>
+                        {% if book.sync_status == 'synced' %}
+                            <span class="badge badge-neutral" style="font-size: 0.8em">Synced</span>
+                        {% endif %}
+                    {% else %}
+                        <span class="badge badge-warning">Unmapped</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if book.is_mapped %}
+                        <a href="/map/{{ book.id }}" class="button button-outline button-small">Remap</a>
+                    {% else %}
+                        <a href="/map/{{ book.id }}" class="button button-small">Map</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="6" class="text-center">No books found. Try syncing first.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    <!-- Pagination -->
+    <div class="row">
+        <div class="column">
+            {% if page > 1 %}
+                <a href="/?page={{ page - 1 }}" class="button button-outline">Previous</a>
+            {% endif %}
+        </div>
+        <div class="column text-right">
+            {% if (page * limit) < total_count %}
+                <a href="/?page={{ page + 1 }}" class="button button-outline">Next</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

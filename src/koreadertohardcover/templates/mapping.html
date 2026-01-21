@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Map Book: {{ book.title }}</h2>
+<p class="mb-2">Author: <strong>{{ book.author }}</strong> | Pages: {{ book.total_pages }}</p>
+
+<!-- Search Form -->
+<form method="post" action="/map/{{ book.id }}/search">
+    <fieldset>
+        <div class="row">
+            <div class="column column-80">
+                <input type="text" name="query" placeholder="Search Hardcover..." value="{{ query or book.title }}">
+            </div>
+            <div class="column column-20">
+                <input class="button-primary" type="submit" value="Search">
+            </div>
+        </div>
+    </fieldset>
+</form>
+
+{% if search_results %}
+    <h3>Search Results</h3>
+    {% for result in search_results %}
+    <div class="card">
+        <div class="row">
+            <div class="column column-75">
+                <h4>{{ result.title }}</h4>
+                <p>By {{ result.author_name }} | {{ result.pages or '?' }} pages</p>
+                <small>ID: {{ result.id }}</small>
+            </div>
+            <div class="column column-25 text-right">
+                <form method="post" action="/map/{{ book.id }}/select">
+                    <input type="hidden" name="hardcover_id" value="{{ result.id }}">
+                    <input type="hidden" name="title" value="{{ result.title }}">
+                    <input type="hidden" name="author" value="{{ result.author_name }}">
+                    <input class="button" type="submit" value="Select">
+                </form>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+{% elif query %}
+    <div class="alert alert-error">No results found for "{{ query }}"</div>
+{% endif %}
+
+<a href="/" class="button button-outline mt-2">Back to Dashboard</a>
+{% endblock %}
