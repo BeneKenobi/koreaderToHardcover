@@ -225,7 +225,7 @@ async def view_logs(request: Request):
             # Efficiently read last lines would be better for huge files,
             # but for now standard readlines is okay for a simple tool
             lines = f.readlines()
-            recent_logs = "".join(lines[-200:])
+            recent_logs = "".join(reversed(lines[-1000:]))
     else:
         recent_logs = "No logs found."
 
