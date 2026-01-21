@@ -45,7 +45,13 @@
         <tbody>
             {% for book in books %}
             <tr>
-                <td><strong>{{ book.title }}</strong></td>
+                <td>
+                    {% if book.hardcover_slug %}
+                        <a href="https://hardcover.app/books/{{ book.hardcover_slug }}" target="_blank" style="color: var(--rp-text); text-decoration: underline;"><strong>{{ book.title }}</strong></a>
+                    {% else %}
+                        <strong>{{ book.title }}</strong>
+                    {% endif %}
+                </td>
                 <td>{{ book.author }}</td>
                 <td>
                     {% if book.total_pages > 0 %}

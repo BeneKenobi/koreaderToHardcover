@@ -145,6 +145,18 @@ async def dashboard(request: Request, page: int = 1):
     message = request.session.pop("message", None)
     message_type = request.session.pop("message_type", None)
 
+    # Fetch Hardcover Username (Cache in session)
+    username = request.session.get("hardcover_username")
+    if not username and config.HARDCOVER_BEARER_TOKEN:
+        try:
+            hc = HardcoverClient(config)
+            me = hc.get_me()
+            username = me.get("username")
+            if username:
+                request.session["hardcover_username"] = username
+        except Exception as e:
+            logger.error(f"Failed to fetch user info: {e}")
+
     limit = 10
     offset = (page - 1) * limit
 
@@ -153,7 +165,7 @@ async def dashboard(request: Request, page: int = 1):
     # Prepare book objects for template
     book_list = []
     for b in books:
-        # b = (id, title, authors, last_open, is_mapped)
+        # b = (id, title, authors, last_open, is_mapped, hardcover_slug, hardcover_id)
         book_list.append(
             {
                 "id": b[0],
@@ -166,6 +178,8 @@ async def dashboard(request: Request, page: int = 1):
                 # Or just fetch detail here.
                 "last_read": b[3],
                 "is_mapped": bool(b[4]),
+                "hardcover_slug": b[5],
+                "hardcover_id": b[6],
                 # Hack: We need read/total pages.
                 # Let's just fetch it individually for now or update the main query.
                 # Updating the main query is better but let's stick to existing for a sec.
@@ -205,6 +219,7 @@ async def dashboard(request: Request, page: int = 1):
             "message": message,
             "message_type": message_type,
             "sync_status": sync_status,
+            "username": username,
         },
     )
 

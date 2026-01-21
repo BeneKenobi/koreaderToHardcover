@@ -113,7 +113,9 @@ class DatabaseManager:
                     b.title,
                     b.authors,
                     b.last_open,
-                    CASE WHEN m.local_book_id IS NOT NULL THEN 1 ELSE 0 END as is_mapped
+                    CASE WHEN m.local_book_id IS NOT NULL THEN 1 ELSE 0 END as is_mapped,
+                    m.hardcover_slug,
+                    m.hardcover_id
                 FROM books b
                 LEFT JOIN book_mappings m ON b.id = m.local_book_id
                 {where_clause}

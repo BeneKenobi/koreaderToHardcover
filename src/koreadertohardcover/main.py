@@ -67,7 +67,7 @@ def map_book(query, db_path):
         table.add_column("Last Read", style="blue")
         table.add_column("Status", style="green")
 
-        for idx, (b_id, title, author, last_open, is_mapped) in enumerate(books, 1):
+        for idx, (b_id, title, author, last_open, is_mapped, *_) in enumerate(books, 1):
             status = "[green]Mapped[/green]" if is_mapped else "[red]Unmapped[/red]"
             last_read_str = str(last_open) if last_open else "Never"
             table.add_row(str(idx), title, author or "Unknown", last_read_str, status)

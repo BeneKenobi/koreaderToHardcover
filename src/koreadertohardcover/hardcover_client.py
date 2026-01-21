@@ -37,6 +37,23 @@ class HardcoverClient:
                 print(f"Response: {e.response.text}")
                 raise e
 
+    def get_me(self) -> Dict[str, Any]:
+        """Fetches the authenticated user's information."""
+        gql = """
+        query GetMe {
+          me {
+            id
+            username
+            name
+          }
+        }
+        """
+        data = self._execute_query(gql)
+        me = data.get("me", [])
+        if me:
+            return me[0]
+        return {}
+
     def search_books(self, query: str) -> List[Dict[str, Any]]:
         gql = """
         query SearchBooks($query: String!) {
