@@ -15,6 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 import datetime
 import secrets
 
@@ -24,7 +25,7 @@ from koreadertohardcover.hardcover_client import HardcoverClient
 
 # Configure Logging
 log_path = os.getenv("LOG_PATH", "app.log")
-file_handler = logging.FileHandler(log_path, mode="a")
+file_handler = RotatingFileHandler(log_path, maxBytes=5 * 1024 * 1024, backupCount=3)
 file_handler.setFormatter(
     logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 )
