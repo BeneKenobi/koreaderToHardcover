@@ -1,15 +1,14 @@
 from fastapi import FastAPI, Request, Form, BackgroundTasks
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 import os
 import logging
+import datetime
 
 from koreadertohardcover.engine import SyncEngine
 from koreadertohardcover.config import Config
-from koreadertohardcover.database import DatabaseManager
 from koreadertohardcover.hardcover_client import HardcoverClient
 
 # Configure Logging
@@ -60,9 +59,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # --- Helpers ---
-
-
-import datetime
 
 
 def scheduled_sync():
