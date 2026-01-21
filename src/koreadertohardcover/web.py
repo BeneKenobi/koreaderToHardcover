@@ -12,7 +12,12 @@ from koreadertohardcover.config import Config
 from koreadertohardcover.hardcover_client import HardcoverClient
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
+log_path = os.getenv("LOG_PATH", "app.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(), logging.FileHandler(log_path, mode="a")],
+)
 logger = logging.getLogger("web")
 
 # Globals
@@ -160,6 +165,23 @@ async def trigger_sync(background_tasks: BackgroundTasks):
     background_tasks.add_task(scheduled_sync)
     return RedirectResponse(
         url="/?message=Sync+started+in+background&message_type=success", status_code=303
+    )
+
+
+@app.get("/logs", response_class=HTMLResponse)
+async def view_logs(request: Request):
+    """View application logs."""
+    if os.path.exists(log_path):
+        with open(log_path, "r") as f:
+            # Efficiently read last lines would be better for huge files,
+            # but for now standard readlines is okay for a simple tool
+            lines = f.readlines()
+            recent_logs = "".join(lines[-200:])
+    else:
+        recent_logs = "No logs found."
+
+    return templates.TemplateResponse(
+        "logs.html", {"request": request, "logs": recent_logs}
     )
 
 
