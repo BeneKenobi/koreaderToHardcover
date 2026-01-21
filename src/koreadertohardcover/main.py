@@ -1,8 +1,15 @@
 import click
 import os
+import logging
 from rich.console import Console
 from rich.table import Table
 from koreadertohardcover.database import DatabaseManager
+
+# Configure logging for CLI
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+
 from koreadertohardcover.config import Config
 from koreadertohardcover.hardcover_client import HardcoverClient
 from koreadertohardcover.mapping import InteractiveMapper
@@ -28,11 +35,11 @@ def map_book(query, db_path):
     Otherwise, opens an interactive browser of local books.
     """
     db = DatabaseManager(db_path)
-    try:
-        db.connect()
-    except Exception as e:
-        click.echo(click.style(f"Error connecting to database: {e}", fg="red"))
-        return
+    # try:
+    #     db.connect()
+    # except Exception as e:
+    #     click.echo(click.style(f"Error connecting to database: {e}", fg="red"))
+    #     return
 
     config = Config()
     hc = HardcoverClient(config)
@@ -168,10 +175,9 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
 
     # 3. Summary
     db = DatabaseManager(db_path)
-    try:
-        db.connect()
-        books_count = db.conn.execute("SELECT count(*) FROM books").fetchone()[0]
-        sessions_count = db.conn.execute(
+    with db.get_connection() as conn:
+        books_count = conn.execute("SELECT count(*) FROM books").fetchone()[0]
+        sessions_count = conn.execute(
             "SELECT count(*) FROM reading_sessions"
         ).fetchone()[0]
 
@@ -181,8 +187,6 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
                 fg="green",
             )
         )
-    finally:
-        db.close()
 
 
 if __name__ == "__main__":

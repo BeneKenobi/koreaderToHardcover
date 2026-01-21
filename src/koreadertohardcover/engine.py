@@ -8,9 +8,6 @@ from koreadertohardcover.webdav_client import fetch_koreader_db
 from koreadertohardcover.hardcover_client import HardcoverClient
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger(__name__)
 
 
