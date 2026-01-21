@@ -72,6 +72,7 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS book_mappings (
                 local_book_id VARCHAR PRIMARY KEY,
                 hardcover_id VARCHAR,
+                edition_id VARCHAR,
                 hardcover_slug VARCHAR,
                 book_title VARCHAR,
                 author VARCHAR,
@@ -97,6 +98,47 @@ class DatabaseManager:
         if not self.conn:
             self.connect()
         return self.conn
+
+    def get_local_books(
+        self, query: Optional[str] = None, limit: int = 10, offset: int = 0
+    ) -> tuple[list[tuple], int]:
+        """
+        Fetches local books with optional search, pagination, and mapping status.
+        Returns (books, total_count).
+        """
+        if not self.conn:
+            self.connect()
+
+        # Base query
+        where_clause = ""
+        params = []
+        if query:
+            where_clause = "WHERE b.title ILIKE ? OR b.authors ILIKE ?"
+            search_term = f"%{query}%"
+            params = [search_term, search_term]
+
+        # Get total count first
+        count_query = f"SELECT COUNT(*) FROM books b {where_clause}"
+        total = self.conn.execute(count_query, params).fetchone()[0]
+
+        # Get paginated results with mapping status
+        # We perform a LEFT JOIN on book_mappings to check if it's already mapped
+        sql = f"""
+            SELECT 
+                b.id,
+                b.title,
+                b.authors,
+                b.last_open,
+                CASE WHEN m.local_book_id IS NOT NULL THEN 1 ELSE 0 END as is_mapped
+            FROM books b
+            LEFT JOIN book_mappings m ON b.id = m.local_book_id
+            {where_clause}
+            ORDER BY b.last_open DESC NULLS LAST
+            LIMIT ? OFFSET ?
+        """
+
+        books = self.conn.execute(sql, params + [limit, offset]).fetchall()
+        return books, total
 
     def import_books(self, sqlite_path: str):
         """Imports books from a KOReader SQLite database."""
@@ -218,30 +260,37 @@ class DatabaseManager:
         except Exception:
             pass
 
-    def get_book_mapping(self, local_id: str) -> Optional[str]:
-        """Returns the hardcover_id for a given local book ID (MD5)."""
+    def get_book_mapping(self, local_id: str) -> Optional[tuple[str, Optional[str]]]:
+        """Returns the (hardcover_id, edition_id) for a given local book ID (MD5)."""
         if not self.conn:
             self.connect()
         row = self.conn.execute(
-            "SELECT hardcover_id FROM book_mappings WHERE local_book_id = ?", [local_id]
+            "SELECT hardcover_id, edition_id FROM book_mappings WHERE local_book_id = ?",
+            [local_id],
         ).fetchone()
-        return row[0] if row else None
+        return (row[0], row[1]) if row else None
 
     def save_book_mapping(
-        self, local_id: str, hardcover_id: str, title: str = None, author: str = None
+        self,
+        local_id: str,
+        hardcover_id: str,
+        edition_id: str = None,
+        title: str = None,
+        author: str = None,
     ):
         """Saves a mapping between a local book and Hardcover."""
         if not self.conn:
             self.connect()
         self.conn.execute(
             """
-            INSERT INTO book_mappings (local_book_id, hardcover_id, book_title, author, mapping_method)
-            VALUES (?, ?, ?, ?, 'manual')
+            INSERT INTO book_mappings (local_book_id, hardcover_id, edition_id, book_title, author, mapping_method)
+            VALUES (?, ?, ?, ?, ?, 'manual')
             ON CONFLICT (local_book_id) DO UPDATE SET
                 hardcover_id = excluded.hardcover_id,
+                edition_id = excluded.edition_id,
                 book_title = excluded.book_title,
                 author = excluded.author,
                 updated_at = now()
         """,
-            [local_id, hardcover_id, title, author],
+            [local_id, hardcover_id, edition_id, title, author],
         )

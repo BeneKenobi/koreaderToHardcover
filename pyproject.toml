@@ -9,6 +9,7 @@ dependencies = [
     "duckdb>=1.4.3",
     "httpx>=0.28.1",
     "python-dotenv>=1.2.1",
+    "rich>=14.2.0",
     "webdav4>=0.10.0",
 ]
 

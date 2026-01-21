@@ -1,6 +1,8 @@
 import click
 import os
 import tempfile
+from rich.console import Console
+from rich.table import Table
 from koreadertohardcover.database import DatabaseManager
 from koreadertohardcover.config import Config
 from koreadertohardcover.webdav_client import fetch_koreader_db
@@ -12,6 +14,108 @@ from koreadertohardcover.mapping import InteractiveMapper
 def cli():
     """KOReader to Hardcover sync tool."""
     pass
+
+
+@cli.command(name="map")
+@click.argument("query", required=False)
+@click.option(
+    "--db-path", default="reading_stats.duckdb", help="Path to local DuckDB database."
+)
+def map_book(query, db_path):
+    """
+    Manually map a local book to a Hardcover edition.
+
+    If QUERY is provided, searches for books matching the title.
+    Otherwise, opens an interactive browser of local books.
+    """
+    db = DatabaseManager(db_path)
+    try:
+        db.connect()
+    except Exception as e:
+        click.echo(click.style(f"Error connecting to database: {e}", fg="red"))
+        return
+
+    config = Config()
+    hc = HardcoverClient(config)
+    mapper = InteractiveMapper(hc, db)
+    console = Console()
+
+    offset = 0
+    limit = 10
+
+    while True:
+        # Fetch books
+        books, total_count = db.get_local_books(query, limit, offset)
+
+        # If specific query yields exactly one match and we're on the first page
+        # and not in browser navigation (offset=0), we could auto-select,
+        # but to be safe and consistent, we'll show the table unless user confirms.
+        # Actually, let's just stick to the browser view for consistency.
+
+        if not books:
+            console.print("[yellow]No local books found matching criteria.[/yellow]")
+            return
+
+        # Display table
+        table = Table(
+            title=f"Local Books ({offset + 1}-{min(offset + len(books), total_count)} of {total_count})"
+        )
+        table.add_column("#", style="cyan", no_wrap=True)
+        table.add_column("Title", style="white")
+        table.add_column("Author", style="dim")
+        table.add_column("Last Read", style="blue")
+        table.add_column("Status", style="green")
+
+        for idx, (b_id, title, author, last_open, is_mapped) in enumerate(books, 1):
+            status = "[green]Mapped[/green]" if is_mapped else "[red]Unmapped[/red]"
+            last_read_str = str(last_open) if last_open else "Never"
+            table.add_row(str(idx), title, author or "Unknown", last_read_str, status)
+
+        console.print(table)
+
+        # Prompt
+        console.print(
+            "\n[bold]Options:[/bold] [cyan]1-9, 0[/cyan] Select (0=10) | [cyan]n[/cyan]ext | [cyan]p[/cyan]revious | [cyan]q[/cyan]uit"
+        )
+        choice = click.getchar()
+
+        if choice.lower() == "q":
+            break
+        elif choice.lower() == "n":
+            if offset + limit < total_count:
+                offset += limit
+            else:
+                console.print("[yellow]Already on last page.[/yellow]")
+        elif choice.lower() == "p":
+            if offset - limit >= 0:
+                offset -= limit
+            else:
+                console.print("[yellow]Already on first page.[/yellow]")
+        else:
+            try:
+                # Map '0' to 10 for single-keystroke selection
+                if choice == "0":
+                    choice = "10"
+
+                idx = int(choice)
+                if 1 <= idx <= len(books):
+                    selected = books[idx - 1]
+                    b_id, title, authors = selected[0], selected[1], selected[2]
+
+                    console.print(f"\n[bold]Starting mapping for: {title}[/bold]")
+                    mapper.map_book(b_id, title, authors, force=True)
+
+                    # Pause to let user see result
+                    click.prompt(
+                        "\nPress Enter to continue", default="", show_default=False
+                    )
+                else:
+                    console.print("[red]Invalid selection.[/red]")
+            except ValueError:
+                # Don't print error for random keys to keep UI clean,
+                # or maybe just ignore them.
+                # But 'getchar' is immediate, so user might type something accidental.
+                pass
 
 
 @cli.command()
@@ -121,9 +225,11 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
                     click.echo(f'\nProcessing "{title}"... ')
 
                     # Mapping
-                    hc_id = mapper.map_book(b_id, title, authors)
-                    if not hc_id:
+                    mapping = mapper.map_book(b_id, title, authors)
+                    if not mapping:
                         continue
+
+                    hc_id, edition_id = mapping
 
                     # Calculate percentage
                     percentage = (read_pg / total_pg * 100) if total_pg > 0 else 0
@@ -140,6 +246,7 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
                         last_read_date=last_open,
                         start_date=start_date,
                         force=force,
+                        edition_id=edition_id,
                     )
 
                     if success:

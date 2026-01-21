@@ -20,7 +20,7 @@ class HardcoverClient:
     def _execute_query(
         self, query: str, variables: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        with httpx.Client() as client:
+        with httpx.Client(timeout=30.0) as client:
             try:
                 response = client.post(
                     self.API_URL,
@@ -40,34 +40,65 @@ class HardcoverClient:
     def search_books(self, query: str) -> List[Dict[str, Any]]:
         gql = """
         query SearchBooks($query: String!) {
-          books(where: {title: {_eq: $query}}, limit: 10) {
-            id
-            title
-            pages
-            canonical_id
-            contributions {
-              author {
-                name
-              }
-            }
+          search(query: $query) {
+            results
           }
         }
         """
         data = self._execute_query(gql, {"query": query})
 
         results = []
-        for book in data.get("books", []):
-            author_name = "Unknown"
-            if book.get("contributions"):
-                author_name = book["contributions"][0]["author"]["name"]
+        search_data = data.get("search", {})
+        if not search_data:
+            return []
+
+        hits = search_data.get("results", {}).get("hits", [])
+        for hit in hits:
+            doc = hit.get("document", {})
+            author_names = doc.get("author_names", [])
+            author_name = author_names[0] if author_names else "Unknown"
 
             results.append(
                 {
-                    "id": book["id"],
-                    "title": book["title"],
+                    "id": doc["id"],
+                    "title": doc["title"],
                     "author_name": author_name,
-                    "pages": book.get("pages"),
-                    "canonical_id": book.get("canonical_id"),
+                    "pages": doc.get("pages"),
+                    "slug": doc.get("slug"),
+                }
+            )
+        return results
+
+    def get_editions(self, book_id: int) -> List[Dict[str, Any]]:
+        """Fetches editions for a given book ID."""
+        gql = """
+        query GetEditions($book_id: Int!) {
+          editions(where: {book_id: {_eq: $book_id}}, order_by: {release_date: desc}) {
+            id
+            title
+            pages
+            edition_format
+            release_date
+            language {
+              language
+            }
+          }
+        }
+        """
+        data = self._execute_query(gql, {"book_id": book_id})
+        results = []
+        for ed in data.get("editions", []):
+            lang_data = ed.get("language")
+            language = lang_data.get("language") if lang_data else "Unknown"
+
+            results.append(
+                {
+                    "id": ed["id"],
+                    "title": ed["title"],
+                    "pages": ed.get("pages"),
+                    "edition_format": ed.get("edition_format"),
+                    "release_date": ed.get("release_date"),
+                    "language": language,
                 }
             )
         return results
@@ -90,7 +121,12 @@ class HardcoverClient:
         return False
 
     def search_shelf(self, title: str) -> List[Dict[str, Any]]:
-        """Searches the user's shelf for a book by title."""
+        """
+        Searches the user's shelf for a book by title.
+        First tries an exact API match. If that fails, fetches user's books
+        and performs a local case-insensitive search.
+        """
+        # 1. Try exact API match
         gql = """
         query SearchShelf($title: String!) {
           me {
@@ -128,6 +164,58 @@ class HardcoverClient:
                         "pages": book.get("pages"),
                     }
                 )
+
+        if results:
+            return results
+
+        # 2. Fallback: Fetch all books and search locally
+        print(f"  Exact match failed. Fetching shelf to search for '{title}'...")
+        # Note: Limit 50 most recently updated books to find current reads
+        gql_all = """
+        query GetAllUserBooks {
+          me {
+            user_books(limit: 50, order_by: {updated_at: desc}) {
+              book {
+                id
+                title
+                pages
+                contributions {
+                  author {
+                    name
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        data_all = self._execute_query(gql_all)
+        me_all = data_all.get("me", [])
+
+        if not me_all:
+            return []
+
+        search_term = title.lower().strip()
+
+        for ub in me_all[0].get("user_books", []):
+            book = ub["book"]
+            book_title = book["title"]
+
+            # Check for case-insensitive match
+            if book_title.lower().strip() == search_term:
+                author_name = "Unknown"
+                if book.get("contributions"):
+                    author_name = book["contributions"][0]["author"]["name"]
+
+                results.append(
+                    {
+                        "id": book["id"],
+                        "title": book_title,
+                        "author_name": author_name,
+                        "pages": book.get("pages"),
+                    }
+                )
+
         return results
 
     def update_progress(
@@ -139,24 +227,40 @@ class HardcoverClient:
         last_read_date: Any = None,
         start_date: Any = None,
         force: bool = False,
+        edition_id: Optional[str] = None,
     ) -> bool:
         """
         Updates the progress of a book on Hardcover.
         """
         status_id = 2 if status == "reading" else 3
         b_id = int(book_id)
+        e_id = int(edition_id) if edition_id else None
 
         try:
-            # 1. Get UserBook info and Book total pages
-            info_gql = """
+            # 1. Get Book/Edition total pages
+            total_pages = None
+            if e_id:
+                edition_gql = "query GetEditionPages($id: Int!) { editions_by_pk(id: $id) { pages } }"
+                ed_res = self._execute_query(edition_gql, {"id": e_id})
+                if ed_res.get("editions_by_pk"):
+                    total_pages = ed_res["editions_by_pk"].get("pages")
+
+            if not total_pages:
+                book_gql = (
+                    "query GetBookPages($id: Int!) { books_by_pk(id: $id) { pages } }"
+                )
+                bk_res = self._execute_query(book_gql, {"id": b_id})
+                if bk_res.get("books_by_pk"):
+                    total_pages = bk_res["books_by_pk"].get("pages")
+
+            # 2. Get UserBook info
+            ub_gql = """
             query GetUserBookInfo($book_id: Int!) {
-              books_by_pk(id: $book_id) {
-                pages
-              }
               me {
                 user_books(where: {book_id: {_eq: $book_id}}) {
                   id
                   status_id
+                  edition_id
                   user_book_reads(order_by: {id: desc}, limit: 1) {
                     id
                     progress_pages
@@ -168,10 +272,7 @@ class HardcoverClient:
               }
             }
             """
-            info = self._execute_query(info_gql, {"book_id": b_id})
-
-            book_data = info.get("books_by_pk")
-            total_pages = book_data.get("pages") if book_data else None
+            info = self._execute_query(ub_gql, {"book_id": b_id})
 
             me_data = info.get("me", [])
             user_book = None
@@ -185,6 +286,7 @@ class HardcoverClient:
 
             # Check if update is needed
             current_status = user_book.get("status_id") if user_book else None
+            current_edition = user_book.get("edition_id") if user_book else None
             current_page = None
             current_seconds = None
             current_start = None
@@ -198,7 +300,12 @@ class HardcoverClient:
                     current_finish = ubr_list[0].get("finished_at")
 
             # Skip if status, page, seconds and dates match (allow small drift), unless forced
-            if not force and user_book and current_status == status_id:
+            if (
+                not force
+                and user_book
+                and current_status == status_id
+                and (e_id is None or current_edition == e_id)
+            ):
                 page_match = (
                     current_page is not None and abs(current_page - target_page) < 2
                 )
@@ -227,17 +334,37 @@ class HardcoverClient:
             # 2. If no UserBook, create it
             if not user_book:
                 create_ub_gql = """
-                mutation CreateUserBook($book_id: Int!, $status_id: Int!) {
-                  insert_user_book(object: {book_id: $book_id, status_id: $status_id}) {
+                mutation CreateUserBook($book_id: Int!, $status_id: Int!, $edition_id: Int) {
+                  insert_user_book(object: {book_id: $book_id, status_id: $status_id, edition_id: $edition_id}) {
                     id
                   }
                 }
                 """
                 res = self._execute_query(
-                    create_ub_gql, {"book_id": b_id, "status_id": status_id}
+                    create_ub_gql,
+                    {"book_id": b_id, "status_id": status_id, "edition_id": e_id},
                 )
                 ub_id = res["insert_user_book"]["id"]
-                ubr_id = None
+
+                # Check if a read was auto-created by fetching the new user_book
+                fetch_new_ub = """
+                query GetNewUserBook($id: Int!) {
+                  user_books_by_pk(id: $id) {
+                    user_book_reads(order_by: {id: desc}, limit: 1) {
+                      id
+                    }
+                  }
+                }
+                """
+                new_ub_res = self._execute_query(fetch_new_ub, {"id": ub_id})
+                new_ub_reads = new_ub_res.get("user_books_by_pk", {}).get(
+                    "user_book_reads", []
+                )
+                ubr_id = new_ub_reads[0]["id"] if new_ub_reads else None
+
+                # Since we just created it with these values, update current state to avoid redundant update in Step 6
+                current_status = status_id
+                current_edition = e_id
             else:
                 ub_id = user_book["id"]
                 ubr_list = user_book.get("user_book_reads", [])
@@ -247,7 +374,7 @@ class HardcoverClient:
             if not ubr_id:
                 create_ubr_gql = """
                 mutation CreateUserBookRead($ub_id: Int!) {
-                  insert_user_book_read(object: {user_book_id: $ub_id}) {
+                  insert_user_book_read(user_book_id: $ub_id, user_book_read: {}) {
                     id
                   }
                 }
@@ -288,17 +415,18 @@ class HardcoverClient:
                 },
             )
 
-            # 6. Update Status (if changed)
-            if current_status != status_id:
+            # 6. Update Status and Edition (if changed)
+            if current_status != status_id or current_edition != e_id:
                 update_ub_gql = """
-                mutation UpdateUB($ub_id: Int!, $status_id: Int!) {
-                  update_user_book(id: $ub_id, object: {status_id: $status_id}) {
+                mutation UpdateUB($ub_id: Int!, $status_id: Int!, $edition_id: Int) {
+                  update_user_book(id: $ub_id, object: {status_id: $status_id, edition_id: $edition_id}) {
                     id
                   }
                 }
                 """
                 self._execute_query(
-                    update_ub_gql, {"ub_id": ub_id, "status_id": status_id}
+                    update_ub_gql,
+                    {"ub_id": ub_id, "status_id": status_id, "edition_id": e_id},
                 )
 
             return True

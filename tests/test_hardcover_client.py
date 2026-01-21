@@ -24,22 +24,30 @@ def test_search_books(client):
             200,
             json={
                 "data": {
-                    "books": [
-                        {
-                            "id": "123",
-                            "title": "Project Hail Mary",
-                            "contributions": [{"author": {"name": "Andy Weir"}}],
-                            "pages": 100,
-                            "canonical_id": None,
-                        },
-                        {
-                            "id": "456",
-                            "title": "Project Hail Mary (Alternate)",
-                            "contributions": [{"author": {"name": "Andy Weir"}}],
-                            "pages": 100,
-                            "canonical_id": 123,
-                        },
-                    ]
+                    "search": {
+                        "results": {
+                            "hits": [
+                                {
+                                    "document": {
+                                        "id": "123",
+                                        "title": "Project Hail Mary",
+                                        "author_names": ["Andy Weir"],
+                                        "pages": 100,
+                                        "slug": "project-hail-mary",
+                                    }
+                                },
+                                {
+                                    "document": {
+                                        "id": "456",
+                                        "title": "Project Hail Mary (Alternate)",
+                                        "author_names": ["Andy Weir"],
+                                        "pages": 100,
+                                        "slug": "project-hail-mary-alt",
+                                    }
+                                },
+                            ]
+                        }
+                    }
                 }
             },
         )
@@ -56,13 +64,10 @@ def test_search_books(client):
 def test_update_progress(client):
     def mock_handler(request):
         content = request.read().decode("utf-8")
+        if "GetBookPages" in content:
+            return Response(200, json={"data": {"books_by_pk": {"pages": 100}}})
         if "GetUserBookInfo" in content:
-            return Response(
-                200,
-                json={
-                    "data": {"books_by_pk": {"pages": 100}, "me": [{"user_books": []}]}
-                },
-            )
+            return Response(200, json={"data": {"me": [{"user_books": []}]}})
         elif "CreateUserBookRead" in content:
             return Response(200, json={"data": {"insert_user_book_read": {"id": 888}}})
         elif "CreateUserBook" in content:
