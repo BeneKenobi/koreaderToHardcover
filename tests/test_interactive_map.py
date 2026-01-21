@@ -4,19 +4,20 @@ from koreadertohardcover.database import DatabaseManager
 
 class TestDatabaseManager:
     @pytest.fixture
-    def db(self):
-        db = DatabaseManager(":memory:")
-        db.connect()
+    def db(self, tmp_path):
+        db_path = tmp_path / "test_map.duckdb"
+        db = DatabaseManager(str(db_path))
         # Seed test data
-        db.conn.execute(
-            "INSERT INTO books (id, title, authors, last_open) VALUES ('1', 'Book A', 'Author A', '2023-01-01')"
-        )
-        db.conn.execute(
-            "INSERT INTO books (id, title, authors, last_open) VALUES ('2', 'Book B', 'Author B', '2023-01-02')"
-        )
-        db.conn.execute(
-            "INSERT INTO books (id, title, authors, last_open) VALUES ('3', 'Book C', 'Author C', '2023-01-03')"
-        )
+        with db.get_connection() as conn:
+            conn.execute(
+                "INSERT INTO books (id, title, authors, last_open) VALUES ('1', 'Book A', 'Author A', '2023-01-01')"
+            )
+            conn.execute(
+                "INSERT INTO books (id, title, authors, last_open) VALUES ('2', 'Book B', 'Author B', '2023-01-02')"
+            )
+            conn.execute(
+                "INSERT INTO books (id, title, authors, last_open) VALUES ('3', 'Book C', 'Author C', '2023-01-03')"
+            )
         return db
 
     def test_get_local_books_all(self, db):
@@ -46,7 +47,8 @@ class TestDatabaseManager:
 
     def test_get_local_books_mapped_status(self, db):
         # Create mapping for Book A
-        db.conn.execute("INSERT INTO book_mappings (local_book_id) VALUES ('1')")
+        with db.get_connection() as conn:
+            conn.execute("INSERT INTO book_mappings (local_book_id) VALUES ('1')")
 
         books, _ = db.get_local_books()
 

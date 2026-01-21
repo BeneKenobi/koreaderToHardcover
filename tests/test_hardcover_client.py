@@ -68,6 +68,11 @@ def test_update_progress(client):
             return Response(200, json={"data": {"books_by_pk": {"pages": 100}}})
         if "GetUserBookInfo" in content:
             return Response(200, json={"data": {"me": [{"user_books": []}]}})
+        elif "GetNewUserBook" in content:
+            return Response(
+                200,
+                json={"data": {"user_books_by_pk": {"user_book_reads": [{"id": 777}]}}},
+            )
         elif "CreateUserBookRead" in content:
             return Response(200, json={"data": {"insert_user_book_read": {"id": 888}}})
         elif "CreateUserBook" in content:
