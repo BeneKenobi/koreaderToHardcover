@@ -157,3 +157,42 @@ def test_sync_progress_success(MockHC, engine):
         "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
         ["md5_2"],
     )
+
+
+def test_ingest_from_webdav_exception(engine):
+    with patch(
+        "koreadertohardcover.engine.fetch_koreader_db",
+        side_effect=Exception("Fetch failed"),
+    ):
+        success = engine.ingest_from_webdav()
+        assert success is False
+
+
+def test_ingest_from_local_exception(engine, tmp_path):
+    fake_db = tmp_path / "stats.sqlite3"
+    fake_db.touch()
+
+    # Mock db.import_books to raise exception
+    engine.db.import_books.side_effect = Exception("Import failed")
+
+    success = engine.ingest_from_local(str(fake_db))
+    assert success is False
+
+
+def test_sync_progress_exception(engine):
+    # Mock get_connection to raise exception
+    engine.db.get_connection.side_effect = Exception("DB Connection failed")
+
+    results = engine.sync_progress()
+    assert results == []
+
+
+def test_ingest_from_webdav_cleanup_exception(engine):
+    with patch("koreadertohardcover.engine.fetch_koreader_db"):
+        # Mock os.remove to raise exception
+        with patch("os.remove", side_effect=Exception("Remove failed")):
+            # We need to ensure os.path.exists returns True so it tries to remove
+            with patch("os.path.exists", return_value=True):
+                success = engine.ingest_from_webdav()
+                # Logic should still succeed even if cleanup fails
+                assert success is True
