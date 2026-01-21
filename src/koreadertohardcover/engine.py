@@ -38,7 +38,7 @@ class SyncEngine:
             fetch_koreader_db(self.config, tmp_path)
 
             logger.info("Ingesting data from fetched SQLite DB...")
-            self.db.connect()
+            # self.db.connect()  <- Removed
             self.db.import_books(tmp_path)
             self.db.import_sessions(tmp_path)
             logger.info("Ingestion complete.")
@@ -63,7 +63,7 @@ class SyncEngine:
 
         try:
             logger.info(f"Ingesting data from local file: {sqlite_path}...")
-            self.db.connect()
+            # self.db.connect() <- Removed
             self.db.import_books(sqlite_path)
             self.db.import_sessions(sqlite_path)
             logger.info("Ingestion complete.")
@@ -87,60 +87,63 @@ class SyncEngine:
         hc = HardcoverClient(self.config)
 
         try:
-            self.db.connect()
-            conn = self.db.get_connection()
+            # self.db.connect() <- Removed
+            # conn = self.db.get_connection() <- Changed to context manager
 
-            # Fetch recent books that are mapped
-            # We select books, verify they have a mapping, and then sync
-            sql = """
-                SELECT 
-                    b.id, b.title, b.authors, b.total_read_pages, b.total_pages, 
-                    b.status, b.total_read_time, b.last_open,
-                    m.hardcover_id, m.edition_id,
-                    (SELECT MIN(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as start_date
-                FROM books b
-                JOIN book_mappings m ON b.id = m.local_book_id
-                ORDER BY b.last_open DESC
-                LIMIT ?
-            """
+            with self.db.get_connection() as conn:
+                # Fetch recent books that are mapped
+                # We select books, verify they have a mapping, and then sync
+                sql = """
+                    SELECT 
+                        b.id, b.title, b.authors, b.total_read_pages, b.total_pages, 
+                        b.status, b.total_read_time, b.last_open,
+                        m.hardcover_id, m.edition_id,
+                        (SELECT MIN(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as start_date
+                    FROM books b
+                    JOIN book_mappings m ON b.id = m.local_book_id
+                    ORDER BY b.last_open DESC
+                    LIMIT ?
+                """
 
-            recent_books = conn.execute(sql, [limit]).fetchall()
-            logger.info(f"Found {len(recent_books)} mapped books to check for sync.")
-
-            for (
-                b_id,
-                title,
-                authors,
-                read_pg,
-                total_pg,
-                status,
-                read_time,
-                last_open,
-                hc_id,
-                edition_id,
-                start_date,
-            ) in recent_books:
-                percentage = (read_pg / total_pg * 100) if total_pg > 0 else 0
-                logger.info(f"Syncing '{title}' (ID: {hc_id}) - {percentage:.1f}%")
-
-                success = hc.update_progress(
-                    hc_id,
-                    percentage,
-                    status,
-                    seconds=read_time,
-                    last_read_date=last_open,
-                    start_date=start_date,
-                    force=force,
-                    edition_id=edition_id,
+                recent_books = conn.execute(sql, [limit]).fetchall()
+                logger.info(
+                    f"Found {len(recent_books)} mapped books to check for sync."
                 )
 
-                if success:
-                    conn.execute(
-                        "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
-                        [b_id],
+                for (
+                    b_id,
+                    title,
+                    authors,
+                    read_pg,
+                    total_pg,
+                    status,
+                    read_time,
+                    last_open,
+                    hc_id,
+                    edition_id,
+                    start_date,
+                ) in recent_books:
+                    percentage = (read_pg / total_pg * 100) if total_pg > 0 else 0
+                    logger.info(f"Syncing '{title}' (ID: {hc_id}) - {percentage:.1f}%")
+
+                    success = hc.update_progress(
+                        hc_id,
+                        percentage,
+                        status,
+                        seconds=read_time,
+                        last_read_date=last_open,
+                        start_date=start_date,
+                        force=force,
+                        edition_id=edition_id,
                     )
 
-                results.append((title, success))
+                    if success:
+                        conn.execute(
+                            "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
+                            [b_id],
+                        )
+
+                    results.append((title, success))
 
         except Exception as e:
             logger.error(f"Error during sync: {e}")

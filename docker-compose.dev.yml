@@ -1,0 +1,15 @@
+services:
+  app:
+    # Use reload mode for development
+    command: uvicorn koreadertohardcover.web:app --host 0.0.0.0 --port 8000 --reload
+    
+    # File watching configuration
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /app/src
+        - action: rebuild
+          path: ./pyproject.toml
+        - action: rebuild
+          path: ./uv.lock

@@ -169,21 +169,21 @@ async def dashboard(request: Request, page: int = 1):
     # So I will fetch details manually.
 
     detailed_books = []
-    conn = engine.db.get_connection()
-    for b in book_list:
-        row = conn.execute(
-            "SELECT total_read_pages, total_pages, sync_status FROM books WHERE id = ?",
-            [b["id"]],
-        ).fetchone()
-        if row:
-            b["read_pages"] = row[0]
-            b["total_pages"] = row[1]
-            b["sync_status"] = row[2]
-        else:
-            b["read_pages"] = 0
-            b["total_pages"] = 0
-            b["sync_status"] = "unknown"
-        detailed_books.append(b)
+    with engine.db.get_connection() as conn:
+        for b in book_list:
+            row = conn.execute(
+                "SELECT total_read_pages, total_pages, sync_status FROM books WHERE id = ?",
+                [b["id"]],
+            ).fetchone()
+            if row:
+                b["read_pages"] = row[0]
+                b["total_pages"] = row[1]
+                b["sync_status"] = row[2]
+            else:
+                b["read_pages"] = 0
+                b["total_pages"] = 0
+                b["sync_status"] = "unknown"
+            detailed_books.append(b)
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -229,10 +229,10 @@ async def view_logs(request: Request):
 @app.get("/map/{book_id}", response_class=HTMLResponse)
 async def map_book_ui(request: Request, book_id: str):
     """Mapping Interface - Search."""
-    conn = engine.db.get_connection()
-    book = conn.execute(
-        "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
-    ).fetchone()
+    with engine.db.get_connection() as conn:
+        book = conn.execute(
+            "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
+        ).fetchone()
 
     if not book:
         request.session["message"] = "Book not found"
@@ -254,10 +254,10 @@ async def map_book_ui(request: Request, book_id: str):
 @app.post("/map/{book_id}/search", response_class=HTMLResponse)
 async def map_book_search(request: Request, book_id: str, query: str = Form(...)):
     """Handle Search."""
-    conn = engine.db.get_connection()
-    book = conn.execute(
-        "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
-    ).fetchone()
+    with engine.db.get_connection() as conn:
+        book = conn.execute(
+            "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
+        ).fetchone()
     book_obj = {
         "id": book_id,
         "title": book[0],
@@ -293,11 +293,11 @@ async def map_book_select(
     """Handle Book Selection -> Show Editions."""
     hc = HardcoverClient(config)
 
-    conn = engine.db.get_connection()
-    local_book = conn.execute(
-        "SELECT total_pages FROM books WHERE id = ?", [book_id]
-    ).fetchone()
-    local_pages = local_book[0] if local_book else 0
+    with engine.db.get_connection() as conn:
+        local_book = conn.execute(
+            "SELECT total_pages FROM books WHERE id = ?", [book_id]
+        ).fetchone()
+        local_pages = local_book[0] if local_book else 0
 
     editions = hc.get_editions(int(hardcover_id))
 
