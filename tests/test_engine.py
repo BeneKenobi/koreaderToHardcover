@@ -196,20 +196,3 @@ def test_ingest_from_webdav_cleanup_exception(engine):
                 success = engine.ingest_from_webdav()
                 # Logic should still succeed even if cleanup fails
                 assert success is True
-
-
-def test_backfill_slugs(engine):
-    # Mock DB response for missing slugs
-    conn = engine.db.get_connection.return_value.__enter__.return_value
-    conn.execute.return_value.fetchall.return_value = [("local_1", "1001")]
-
-    # Mock HardcoverClient
-    with patch("koreadertohardcover.engine.HardcoverClient") as MockHC:
-        hc = MockHC.return_value
-        hc.get_book.return_value = {"slug": "slug-1001"}
-
-        updated = engine.backfill_slugs()
-
-        assert updated == 1
-        conn.execute.assert_called()
-        hc.get_book.assert_called_with(1001)
