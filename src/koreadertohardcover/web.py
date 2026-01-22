@@ -124,6 +124,10 @@ def scheduled_sync():
     try:
         if config.WEBDAV_URL:
             engine.ingest_from_webdav()
+
+        # Ensure slugs are populated
+        engine.backfill_slugs()
+
         engine.sync_progress(limit=20)
         sync_status["last_result"] = "Success"
     except Exception as e:

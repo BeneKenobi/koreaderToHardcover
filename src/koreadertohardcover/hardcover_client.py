@@ -86,6 +86,40 @@ class HardcoverClient:
             )
         return results
 
+    def get_book(self, book_id: int) -> Optional[Dict[str, Any]]:
+        """Fetches details for a single book by ID."""
+        gql = """
+        query GetBook($id: Int!) {
+          books_by_pk(id: $id) {
+            id
+            title
+            slug
+            pages
+            contributions {
+              author {
+                name
+              }
+            }
+          }
+        }
+        """
+        data = self._execute_query(gql, {"id": book_id})
+        book = data.get("books_by_pk")
+        if not book:
+            return None
+
+        author_name = "Unknown"
+        if book.get("contributions"):
+            author_name = book["contributions"][0]["author"]["name"]
+
+        return {
+            "id": book["id"],
+            "title": book["title"],
+            "slug": book.get("slug"),
+            "author_name": author_name,
+            "pages": book.get("pages"),
+        }
+
     def get_editions(self, book_id: int) -> List[Dict[str, Any]]:
         """Fetches editions for a given book ID."""
         gql = """

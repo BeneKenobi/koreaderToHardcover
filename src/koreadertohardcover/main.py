@@ -189,5 +189,23 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
         )
 
 
+@cli.command()
+@click.option(
+    "--db-path", default="reading_stats.duckdb", help="Path to local DuckDB database."
+)
+def backfill_slugs(db_path):
+    """Backfill missing Hardcover slugs for existing mappings."""
+    config = Config()
+    engine = SyncEngine(db_path, config)
+
+    click.echo("Starting slug backfill...")
+    count = engine.backfill_slugs()
+
+    if count > 0:
+        click.echo(click.style(f"Successfully backfilled {count} slugs.", fg="green"))
+    else:
+        click.echo("No slugs needed updating (or update failed).")
+
+
 if __name__ == "__main__":
     cli()

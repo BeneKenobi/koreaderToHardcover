@@ -46,9 +46,8 @@
             {% for book in books %}
             <tr>
                 <td>
-                    {% set hc_link = book.hardcover_slug or book.hardcover_id %}
-                    {% if hc_link %}
-                        <a href="https://hardcover.app/books/{{ hc_link }}" target="_blank" style="color: var(--rp-text); text-decoration: underline;"><strong>{{ book.title }}</strong></a>
+                    {% if book.hardcover_slug %}
+                        <a href="https://hardcover.app/books/{{ book.hardcover_slug }}" target="_blank" style="color: var(--rp-text); text-decoration: underline;"><strong>{{ book.title }}</strong></a>
                     {% else %}
                         <strong>{{ book.title }}</strong>
                     {% endif %}
