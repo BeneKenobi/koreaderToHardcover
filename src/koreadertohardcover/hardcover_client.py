@@ -151,6 +151,7 @@ class HardcoverClient:
               book {
                 id
                 title
+                slug
                 pages
                 contributions {
                   author {
@@ -177,6 +178,7 @@ class HardcoverClient:
                     {
                         "id": book["id"],
                         "title": book["title"],
+                        "slug": book.get("slug"),
                         "author_name": author_name,
                         "pages": book.get("pages"),
                     }
@@ -195,6 +197,7 @@ class HardcoverClient:
               book {
                 id
                 title
+                slug
                 pages
                 contributions {
                   author {
@@ -228,6 +231,7 @@ class HardcoverClient:
                     {
                         "id": book["id"],
                         "title": book_title,
+                        "slug": book.get("slug"),
                         "author_name": author_name,
                         "pages": book.get("pages"),
                     }

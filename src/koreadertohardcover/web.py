@@ -313,6 +313,7 @@ async def map_book_select(
     hardcover_id: str = Form(...),
     title: str = Form(...),
     author: str = Form(...),
+    slug: str = Form(None),
 ):
     """Handle Book Selection -> Show Editions."""
     hc = HardcoverClient(config)
@@ -333,6 +334,7 @@ async def map_book_select(
             "hardcover_id": hardcover_id,
             "title": title,
             "author": author,
+            "slug": slug,
             "local_pages": local_pages,
             "editions": editions,
         },
@@ -346,10 +348,11 @@ async def map_book_confirm(
     hardcover_id: str = Form(...),
     title: str = Form(...),
     author: str = Form(...),
+    slug: str = Form(None),
     edition_id: str = Form(None),
 ):
     """Save the mapping."""
-    engine.db.save_book_mapping(book_id, hardcover_id, edition_id, title, author)
+    engine.db.save_book_mapping(book_id, hardcover_id, edition_id, title, author, slug)
     request.session["message"] = "Book mapped successfully"
     request.session["message_type"] = "success"
     return RedirectResponse(url="/", status_code=303)

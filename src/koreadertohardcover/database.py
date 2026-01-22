@@ -258,19 +258,21 @@ class DatabaseManager:
         edition_id: str = None,
         title: str = None,
         author: str = None,
+        slug: str = None,
     ):
         """Saves a mapping between a local book and Hardcover."""
         with self.get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO book_mappings (local_book_id, hardcover_id, edition_id, book_title, author, mapping_method)
-                VALUES (?, ?, ?, ?, ?, 'manual')
+                INSERT INTO book_mappings (local_book_id, hardcover_id, edition_id, book_title, author, hardcover_slug, mapping_method)
+                VALUES (?, ?, ?, ?, ?, ?, 'manual')
                 ON CONFLICT (local_book_id) DO UPDATE SET
                     hardcover_id = excluded.hardcover_id,
                     edition_id = excluded.edition_id,
                     book_title = excluded.book_title,
                     author = excluded.author,
+                    hardcover_slug = excluded.hardcover_slug,
                     updated_at = now()
             """,
-                [local_id, hardcover_id, edition_id, title, author],
+                [local_id, hardcover_id, edition_id, title, author, slug],
             )

@@ -57,6 +57,7 @@ class InteractiveMapper:
                 edition_id,
                 selected["title"],
                 selected["author_name"],
+                selected.get("slug"),
             )
             return (hc_id, edition_id)
 
@@ -110,6 +111,7 @@ class InteractiveMapper:
                     edition_id,
                     selected["title"],
                     selected["author_name"],
+                    selected.get("slug"),
                 )
                 click.echo(click.style(f"  Mapped to: {selected['title']}", fg="green"))
                 return (hardcover_id, edition_id)
