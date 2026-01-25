@@ -93,13 +93,15 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting scheduler with interval: {sync_interval} minutes")
 
     # Schedule periodic sync
-    scheduler.add_job(scheduled_sync, "interval", minutes=sync_interval)
+    scheduler.add_job(
+        scheduled_sync, "interval", minutes=sync_interval, id="recurring_sync"
+    )
     scheduler.start()
 
-    # Initial Ingest (if configured)
+    # Initial Sync (Ingest + Push)
     if config.WEBDAV_URL:
-        logger.info("Triggering initial ingestion...")
-        scheduler.add_job(engine.ingest_from_webdav)
+        logger.info("Triggering initial sync...")
+        scheduler.add_job(scheduled_sync, id="initial_sync")
 
     yield
 
