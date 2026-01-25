@@ -1,7 +1,7 @@
 import os
 import tempfile
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from koreadertohardcover.database import DatabaseManager
 from koreadertohardcover.config import Config
 from koreadertohardcover.webdav_client import fetch_koreader_db
@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 
 
 class SyncEngine:
-    def __init__(self, db_path: str = "reading_stats.duckdb", config: Config = None):
+    def __init__(
+        self, db_path: str = "reading_stats.duckdb", config: Optional[Config] = None
+    ):
         self.db_path = db_path
         self.db = DatabaseManager(db_path)
         self.config = config or Config()
@@ -121,7 +123,9 @@ class SyncEngine:
                     start_date,
                 ) in recent_books:
                     percentage = (read_pg / total_pg * 100) if total_pg > 0 else 0
-                    logger.info(f"Syncing '{title}' (ID: {hc_id}) - {percentage:.1f}%")
+                    logger.info(
+                        f"Syncing '{title}' (ID: {hc_id}) - Status: {status} - {percentage:.1f}%"
+                    )
 
                     success = hc.update_progress(
                         hc_id,

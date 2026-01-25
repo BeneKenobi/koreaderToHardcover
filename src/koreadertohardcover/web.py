@@ -255,20 +255,20 @@ async def view_logs(request: Request):
 async def map_book_ui(request: Request, book_id: str):
     """Mapping Interface - Search."""
     with engine.db.get_connection() as conn:
-        book = conn.execute(
+        book_row = conn.execute(
             "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
         ).fetchone()
 
-    if not book:
+    if not book_row:
         request.session["message"] = "Book not found"
         request.session["message_type"] = "error"
         return RedirectResponse(url="/", status_code=303)
 
     book_obj = {
         "id": book_id,
-        "title": book[0],
-        "author": book[1],
-        "total_pages": book[2],
+        "title": book_row[0],
+        "author": book_row[1],
+        "total_pages": book_row[2],
     }
 
     return templates.TemplateResponse(
@@ -280,14 +280,19 @@ async def map_book_ui(request: Request, book_id: str):
 async def map_book_search(request: Request, book_id: str, query: str = Form(...)):
     """Handle Search."""
     with engine.db.get_connection() as conn:
-        book = conn.execute(
+        book_row = conn.execute(
             "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
         ).fetchone()
+
+    if not book_row:
+        # Handle case where book disappeared or ID is invalid (though less likely in this flow)
+        raise HTTPException(status_code=404, detail="Book not found")
+
     book_obj = {
         "id": book_id,
-        "title": book[0],
-        "author": book[1],
-        "total_pages": book[2],
+        "title": book_row[0],
+        "author": book_row[1],
+        "total_pages": book_row[2],
     }
 
     hc = HardcoverClient(config)
@@ -320,10 +325,10 @@ async def map_book_select(
     hc = HardcoverClient(config)
 
     with engine.db.get_connection() as conn:
-        local_book = conn.execute(
+        local_book_row = conn.execute(
             "SELECT total_pages FROM books WHERE id = ?", [book_id]
         ).fetchone()
-        local_pages = local_book[0] if local_book else 0
+        local_pages = local_book_row[0] if local_book_row else 0
 
     editions = hc.get_editions(int(hardcover_id))
 

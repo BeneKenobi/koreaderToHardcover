@@ -1,6 +1,9 @@
 import httpx
+import logging
 from typing import List, Dict, Any, Optional
 from koreadertohardcover.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class HardcoverClient:
@@ -259,6 +262,7 @@ class HardcoverClient:
 
         try:
             # 1. Get Book/Edition total pages
+            logger.info(f"Fetching page count for Book ID {b_id} (Edition: {e_id})...")
             total_pages = None
             if e_id:
                 edition_gql = "query GetEditionPages($id: Int!) { editions_by_pk(id: $id) { pages } }"
@@ -274,7 +278,10 @@ class HardcoverClient:
                 if bk_res.get("books_by_pk"):
                     total_pages = bk_res["books_by_pk"].get("pages")
 
+            logger.info(f"Found total pages: {total_pages}")
+
             # 2. Get UserBook info
+            logger.info("Checking existing UserBook status on Hardcover...")
             ub_gql = """
             query GetUserBookInfo($book_id: Int!) {
               me {
@@ -308,6 +315,7 @@ class HardcoverClient:
             # Check if update is needed
             current_status = user_book.get("status_id") if user_book else None
             current_edition = user_book.get("edition_id") if user_book else None
+
             current_page = None
             current_seconds = None
             current_start = None
@@ -319,6 +327,23 @@ class HardcoverClient:
                     current_seconds = ubr_list[0].get("progress_seconds")
                     current_start = ubr_list[0].get("started_at")
                     current_finish = ubr_list[0].get("finished_at")
+
+            if user_book:
+                status_map = {1: "Want to Read", 2: "Currently Reading", 3: "Finished"}
+                status_key = int(current_status) if current_status is not None else 0
+                status_str = status_map.get(status_key, str(current_status))
+
+                percentage_str = "0%"
+                if total_pages and current_page:
+                    percentage_str = f"{(current_page / total_pages * 100):.1f}%"
+                elif current_page:
+                    percentage_str = f"{current_page} pages"
+
+                logger.info(
+                    f"Current state: UserBookID={user_book['id']}, Status={status_str}, Edition={current_edition}, Progress={current_page} ({percentage_str})"
+                )
+            else:
+                logger.info("No existing UserBook found on Hardcover.")
 
             # Skip if status, page, seconds and dates match (allow small drift), unless forced
             if (
@@ -349,11 +374,12 @@ class HardcoverClient:
                 )
 
                 if page_match and time_match and start_match and finish_match:
-                    print("  No changes needed (up to date).")
+                    logger.info("No changes needed (up to date).")
                     return True
 
             # 2. If no UserBook, create it
             if not user_book:
+                logger.info("UserBook not found. Creating new entry...")
                 create_ub_gql = """
                 mutation CreateUserBook($book_id: Int!, $status_id: Int!, $edition_id: Int) {
                   insert_user_book(object: {book_id: $book_id, status_id: $status_id, edition_id: $edition_id}) {
@@ -366,6 +392,7 @@ class HardcoverClient:
                     {"book_id": b_id, "status_id": status_id, "edition_id": e_id},
                 )
                 ub_id = res["insert_user_book"]["id"]
+                logger.info(f"Created new UserBook with ID: {ub_id}")
 
                 # Check if a read was auto-created by fetching the new user_book
                 fetch_new_ub = """
@@ -393,6 +420,7 @@ class HardcoverClient:
 
             # 3. If no UserBookRead, create it
             if not ubr_id:
+                logger.info("Creating new reading session...")
                 create_ubr_gql = """
                 mutation CreateUserBookRead($ub_id: Int!) {
                   insert_user_book_read(user_book_id: $ub_id, user_book_read: {}) {
@@ -404,6 +432,9 @@ class HardcoverClient:
                 ubr_id = res["insert_user_book_read"]["id"]
 
             # 4. Update Progress (Pages & Seconds & Dates)
+            logger.info(
+                f"Updating reading progress to Page {target_page if total_pages else current_page}..."
+            )
             update_ubr_gql = """
             mutation UpdateUBR($ubr_id: Int!, $pages: Int, $seconds: Int, $started_at: date, $finished_at: date) {
               update_user_book_read(id: $ubr_id, object: {
@@ -435,9 +466,16 @@ class HardcoverClient:
                     "finished_at": finished_at_str,
                 },
             )
+            logger.info("Progress update successful.")
 
             # 6. Update Status and Edition (if changed)
-            if current_status != status_id or current_edition != e_id:
+            # If local edition is None, use the current Hardcover edition (preserve it)
+            target_edition_id = e_id if e_id is not None else current_edition
+
+            if current_status != status_id or current_edition != target_edition_id:
+                logger.info(
+                    f"Updating status to '{status_id}' and edition to '{target_edition_id}'..."
+                )
                 update_ub_gql = """
                 mutation UpdateUB($ub_id: Int!, $status_id: Int!, $edition_id: Int) {
                   update_user_book(id: $ub_id, object: {status_id: $status_id, edition_id: $edition_id}) {
@@ -447,8 +485,13 @@ class HardcoverClient:
                 """
                 self._execute_query(
                     update_ub_gql,
-                    {"ub_id": ub_id, "status_id": status_id, "edition_id": e_id},
+                    {
+                        "ub_id": ub_id,
+                        "status_id": status_id,
+                        "edition_id": target_edition_id,
+                    },
                 )
+                logger.info("Status and edition update successful.")
 
             return True
         except Exception as e:

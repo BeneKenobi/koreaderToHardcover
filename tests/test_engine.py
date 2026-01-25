@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch, ANY
+from unittest.mock import MagicMock, patch
 from koreadertohardcover.engine import SyncEngine
 from koreadertohardcover.config import Config
 

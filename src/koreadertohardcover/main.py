@@ -4,16 +4,15 @@ import logging
 from rich.console import Console
 from rich.table import Table
 from koreadertohardcover.database import DatabaseManager
+from koreadertohardcover.config import Config
+from koreadertohardcover.hardcover_client import HardcoverClient
+from koreadertohardcover.mapping import InteractiveMapper
+from koreadertohardcover.engine import SyncEngine
 
 # Configure logging for CLI
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-
-from koreadertohardcover.config import Config
-from koreadertohardcover.hardcover_client import HardcoverClient
-from koreadertohardcover.mapping import InteractiveMapper
-from koreadertohardcover.engine import SyncEngine
 
 
 @click.group()
@@ -176,10 +175,13 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
     # 3. Summary
     db = DatabaseManager(db_path)
     with db.get_connection() as conn:
-        books_count = conn.execute("SELECT count(*) FROM books").fetchone()[0]
-        sessions_count = conn.execute(
+        books_count_row = conn.execute("SELECT count(*) FROM books").fetchone()
+        books_count = books_count_row[0] if books_count_row else 0
+
+        sessions_count_row = conn.execute(
             "SELECT count(*) FROM reading_sessions"
-        ).fetchone()[0]
+        ).fetchone()
+        sessions_count = sessions_count_row[0] if sessions_count_row else 0
 
         click.echo(
             click.style(
