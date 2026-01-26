@@ -90,7 +90,18 @@ def get_current_username(credentials: HTTPBasicCredentials = Depends(security)):
 async def lifespan(app: FastAPI):
     # Startup
     sync_interval = int(os.getenv("SYNC_INTERVAL_MINUTES", "60"))
+
+    if sync_interval < 5:
+        logger.warning(
+            f"Configured sync interval ({sync_interval} min) is too low. Enforcing minimum of 5 minutes."
+        )
+        sync_interval = 5
+
     logger.info(f"Starting scheduler with interval: {sync_interval} minutes")
+
+    # Calculate misfire grace time (interval - 1 minute) in seconds
+    # Ensure strictly positive grace time
+    grace_time_seconds = max((sync_interval - 1) * 60, 60)
 
     # Schedule periodic sync (run first one immediately)
     scheduler.add_job(
@@ -99,6 +110,8 @@ async def lifespan(app: FastAPI):
         minutes=sync_interval,
         id="scheduled_sync",
         next_run_time=datetime.datetime.now(),
+        coalesce=True,
+        misfire_grace_time=grace_time_seconds,
     )
     scheduler.start()
 
