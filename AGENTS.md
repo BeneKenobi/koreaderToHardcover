@@ -101,5 +101,6 @@ logger = logging.getLogger(__name__)
 - Do not crash the application on sync failures; catch exceptions, log them, and return a failure status/boolean.
 
 ## Hardcover API
+https://docs.hardcover.app/api/getting-started/
 - **Testing:** Always test every change to the Hardcover API with `curl` using the bearer token from the `.env` file before implementing complex logic.
 - **Rate Limits:** Be mindful of API rate limits; the `SyncEngine` processes books in batches (default limit=20).

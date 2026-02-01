@@ -90,3 +90,48 @@ def test_update_progress(client):
         book_id="123", percentage=50.5, status="reading", seconds=3600
     )
     assert success is True
+
+
+@respx.mock
+def test_update_progress_skips_finished(client):
+    # Test that we skip update if remote status is 3 (Finished)
+    def mock_handler(request):
+        content = request.read().decode("utf-8")
+        if "GetBookPages" in content:
+            return Response(200, json={"data": {"books_by_pk": {"pages": 100}}})
+        if "GetUserBookInfo" in content:
+            # Return status_id 3 (Finished)
+            return Response(
+                200,
+                json={
+                    "data": {
+                        "me": [
+                            {
+                                "user_books": [
+                                    {
+                                        "id": 999,
+                                        "status_id": 3,
+                                        "edition_id": None,
+                                        "user_book_reads": [],
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                },
+            )
+        # Fail if any mutation is attempted
+        if "mutation" in content:
+            return Response(500, json={"error": "Should not attempt mutation"})
+
+        return Response(404)
+
+    respx.post("https://api.hardcover.app/v1/graphql").mock(side_effect=mock_handler)
+
+    # Try to update a book that is finished remotely
+    success = client.update_progress(
+        book_id="123", percentage=50.0, status="reading", seconds=3600
+    )
+
+    # Should succeed (return True) but NOT call any mutations
+    assert success is True

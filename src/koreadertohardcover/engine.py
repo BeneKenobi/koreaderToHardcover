@@ -97,7 +97,9 @@ class SyncEngine:
                         b.id, b.title, b.authors, b.total_read_pages, b.total_pages, 
                         b.status, b.total_read_time, b.last_open,
                         m.hardcover_id, m.edition_id,
-                        (SELECT MIN(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as start_date
+                        (SELECT MIN(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as start_date,
+                        (SELECT MAX(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as last_session_date,
+                        (SELECT MAX(page) FROM reading_sessions rs WHERE rs.book_id = b.id) as max_page
                     FROM books b
                     JOIN book_mappings m ON b.id = m.local_book_id
                     ORDER BY b.last_open DESC
@@ -121,10 +123,31 @@ class SyncEngine:
                     hc_id,
                     edition_id,
                     start_date,
+                    last_session_date,
+                    max_page,
                 ) in recent_books:
-                    percentage = (read_pg / total_pg * 100) if total_pg > 0 else 0
+                    # Use max_page (furthest position) if available, otherwise fall back to read_pg (count)
+                    # This matches KOReader's UI behavior (99% position vs 97% count)
+                    current_progress = (
+                        max_page if max_page and max_page > read_pg else read_pg
+                    )
+                    percentage = (
+                        (current_progress / total_pg * 100) if total_pg > 0 else 0
+                    )
+
+                    # If we are effectively finished (>98%), override status to finished for the sync
+                    # This handles cases where the DB status is 'reading' but position is at the end
+                    if percentage >= 98.0:
+                        status = "finished"
+
                     logger.info(
                         f"Syncing '{title}' (ID: {hc_id}) - Status: {status} - {percentage:.1f}%"
+                    )
+
+                    # Use last_session_date if available, otherwise fallback to last_open
+                    # This ensures we use the actual reading time instead of just file open time
+                    effective_last_read = (
+                        last_session_date if last_session_date else last_open
                     )
 
                     success = hc.update_progress(
@@ -132,7 +155,7 @@ class SyncEngine:
                         percentage,
                         status,
                         seconds=read_time,
-                        last_read_date=last_open,
+                        last_read_date=effective_last_read,
                         start_date=start_date,
                         force=force,
                         edition_id=edition_id,

@@ -316,6 +316,14 @@ class HardcoverClient:
             current_status = user_book.get("status_id") if user_book else None
             current_edition = user_book.get("edition_id") if user_book else None
 
+            # If the book is already finished on Hardcover, do not update it unless forced.
+            # This protects against accidental overwrites of completed books.
+            if not force and current_status == 3:
+                logger.info(
+                    "Book is already marked as 'Finished' on Hardcover. Skipping update."
+                )
+                return True
+
             current_page = None
             current_seconds = None
             current_start = None

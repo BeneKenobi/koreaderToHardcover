@@ -77,7 +77,7 @@ def test_sync_progress_success(MockHC, engine):
     hc_instance.update_progress.return_value = True
 
     # Setup Mock DB Data
-    # Columns: id, title, authors, read_pg, total_pg, status, read_time, last_open, hc_id, ed_id, start_date
+    # Columns: id, title, authors, read_pg, total_pg, status, read_time, last_open, hc_id, ed_id, start_date, last_session_date, max_page
     mock_books = [
         (
             "md5_1",
@@ -91,6 +91,8 @@ def test_sync_progress_success(MockHC, engine):
             "1001",
             None,
             "2023-01-01",
+            None,
+            50,
         ),
         (
             "md5_2",
@@ -104,6 +106,25 @@ def test_sync_progress_success(MockHC, engine):
             "1002",
             "999",
             "2023-01-01",
+            "2023-02-01",
+            200,
+        ),
+        # New test case: Position > Count (e.g. Skipped pages)
+        # Count is 90 (90%), but Position is 99 (99%) -> Should sync as 99% & finished
+        (
+            "md5_3",
+            "Book Three",
+            "Author C",
+            90,
+            100,
+            "reading",
+            3600,
+            "2023-01-03",
+            "1003",
+            None,
+            "2023-01-01",
+            "2023-02-01",
+            99,
         ),
     ]
 
@@ -115,12 +136,13 @@ def test_sync_progress_success(MockHC, engine):
     results = engine.sync_progress(limit=10)
 
     # Verify Results
-    assert len(results) == 2
+    assert len(results) == 3
     assert results[0] == ("Book One", True)
     assert results[1] == ("Book Two", True)
+    assert results[2] == ("Book Three", True)
 
     # Verify Hardcover Client calls
-    assert hc_instance.update_progress.call_count == 2
+    assert hc_instance.update_progress.call_count == 3
 
     # Check first call (Book One)
     hc_instance.update_progress.assert_any_call(
@@ -140,15 +162,27 @@ def test_sync_progress_success(MockHC, engine):
         100.0,
         "finished",
         seconds=7200,
-        last_read_date="2023-01-02",
+        last_read_date="2023-02-01",
         start_date="2023-01-01",
         force=False,
         edition_id="999",
     )
 
+    # Check third call (Book Three - The fix verification)
+    hc_instance.update_progress.assert_any_call(
+        "1003",
+        99.0,  # Should be 99% (based on max_page), not 90%
+        "finished",  # Should be finished (because >= 98%), despite DB saying "reading"
+        seconds=3600,
+        last_read_date="2023-02-01",
+        start_date="2023-01-01",
+        force=False,
+        edition_id=None,
+    )
+
     # Verify DB Updates (sync_status set to 'synced')
-    # execute is called 1 (select) + 2 (updates) = 3 times
-    assert conn.execute.call_count == 3
+    # execute is called 1 (select) + 3 (updates) = 4 times
+    assert conn.execute.call_count == 4
     conn.execute.assert_any_call(
         "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
         ["md5_1"],
@@ -156,6 +190,10 @@ def test_sync_progress_success(MockHC, engine):
     conn.execute.assert_any_call(
         "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
         ["md5_2"],
+    )
+    conn.execute.assert_any_call(
+        "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
+        ["md5_3"],
     )
 
 
