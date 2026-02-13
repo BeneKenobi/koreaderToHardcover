@@ -1,6 +1,7 @@
 import os
 import tempfile
 import logging
+import math
 from typing import List, Tuple, Optional
 from koreadertohardcover.database import DatabaseManager
 from koreadertohardcover.config import Config
@@ -131,17 +132,15 @@ class SyncEngine:
                     current_progress = (
                         max_page if max_page and max_page > read_pg else read_pg
                     )
-                    percentage = (
+                    percentage = math.ceil(
                         (current_progress / total_pg * 100) if total_pg > 0 else 0
                     )
 
-                    # If we are effectively finished (>98%), override status to finished for the sync
-                    # This handles cases where the DB status is 'reading' but position is at the end
-                    if percentage >= 98.0:
+                    if percentage >= 98:
                         status = "finished"
 
                     logger.info(
-                        f"Syncing '{title}' (ID: {hc_id}) - Status: {status} - {percentage:.1f}%"
+                        f"Syncing '{title}' (ID: {hc_id}) - Status: {status} - {percentage}%"
                     )
 
                     # Use last_session_date if available, otherwise fallback to last_open

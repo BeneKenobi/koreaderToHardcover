@@ -1,5 +1,6 @@
 import httpx
 import logging
+import math
 from typing import List, Dict, Any, Optional
 from koreadertohardcover.config import Config
 
@@ -245,7 +246,7 @@ class HardcoverClient:
     def update_progress(
         self,
         book_id: str,
-        percentage: float,
+        percentage: int,
         status: str,
         seconds: int = 0,
         last_read_date: Any = None,
@@ -310,7 +311,7 @@ class HardcoverClient:
             # Calculate target page
             target_page = 0
             if total_pages and total_pages > 0:
-                target_page = int(total_pages * percentage / 100)
+                target_page = math.ceil(total_pages * percentage / 100)
 
             # Check if update is needed
             current_status = user_book.get("status_id") if user_book else None
@@ -343,7 +344,7 @@ class HardcoverClient:
 
                 percentage_str = "0%"
                 if total_pages and current_page:
-                    percentage_str = f"{(current_page / total_pages * 100):.1f}%"
+                    percentage_str = f"{math.ceil(current_page / total_pages * 100)}%"
                 elif current_page:
                     percentage_str = f"{current_page} pages"
 

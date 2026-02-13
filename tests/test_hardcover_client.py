@@ -87,7 +87,7 @@ def test_update_progress(client):
 
     # Passing string ID which client converts to int
     success = client.update_progress(
-        book_id="123", percentage=50.5, status="reading", seconds=3600
+        book_id="123", percentage=51, status="reading", seconds=3600
     )
     assert success is True
 
@@ -130,7 +130,7 @@ def test_update_progress_skips_finished(client):
 
     # Try to update a book that is finished remotely
     success = client.update_progress(
-        book_id="123", percentage=50.0, status="reading", seconds=3600
+        book_id="123", percentage=50, status="reading", seconds=3600
     )
 
     # Should succeed (return True) but NOT call any mutations
