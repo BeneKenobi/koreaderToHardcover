@@ -246,9 +246,9 @@ async def dashboard(request: Request, page: int = 1):
             detailed_books.append(b)
 
     return templates.TemplateResponse(
+        request,
         "dashboard.html",
         {
-            "request": request,
             "books": detailed_books,
             "page": page,
             "limit": limit,
@@ -282,9 +282,7 @@ async def view_logs(request: Request):
     else:
         recent_logs = "No logs found."
 
-    return templates.TemplateResponse(
-        "logs.html", {"request": request, "logs": recent_logs}
-    )
+    return templates.TemplateResponse(request, "logs.html", {"logs": recent_logs})
 
 
 @app.get("/map/{book_id}", response_class=HTMLResponse)
@@ -308,7 +306,7 @@ async def map_book_ui(request: Request, book_id: str):
     }
 
     return templates.TemplateResponse(
-        "mapping.html", {"request": request, "book": book_obj, "query": None}
+        request, "mapping.html", {"book": book_obj, "query": None}
     )
 
 
@@ -338,9 +336,9 @@ async def map_book_search(request: Request, book_id: str, query: str = Form(...)
     results = hc.search_books(query)
 
     return templates.TemplateResponse(
+        request,
         "mapping.html",
         {
-            "request": request,
             "book": book_obj,
             "query": query,
             "search_results": results,
@@ -369,9 +367,9 @@ async def map_book_select(
     editions = hc.get_editions(int(hardcover_id))
 
     return templates.TemplateResponse(
+        request,
         "editions.html",
         {
-            "request": request,
             "book_id": book_id,
             "hardcover_id": hardcover_id,
             "title": title,
