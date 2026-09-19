@@ -19,6 +19,8 @@ from logging.handlers import RotatingFileHandler
 import datetime
 import secrets
 
+import duckdb
+
 from koreadertohardcover.engine import SyncEngine
 from koreadertohardcover.config import Config
 from koreadertohardcover.hardcover_client import HardcoverClient
@@ -115,6 +117,13 @@ async def lifespan(app: FastAPI):
     )
     scheduler.start()
 
+    db_error = engine.db.check_health()
+    if db_error:
+        logger.error(
+            f"Database {db_path} is unreadable ({db_error}). "
+            "Restore it from a backup or rebuild it from KOReader's statistics."
+        )
+
     yield
 
     # Shutdown
@@ -125,6 +134,19 @@ app = FastAPI(lifespan=lifespan, dependencies=[Depends(get_current_username)])
 app.add_middleware(
     SessionMiddleware, secret_key=os.getenv("SECRET_KEY", secrets.token_hex(32))
 )
+
+
+@app.exception_handler(duckdb.Error)
+async def database_error_handler(request: Request, exc: duckdb.Error):
+    """Shows a readable 503 instead of a stack trace when the DuckDB file is damaged."""
+    logger.error(f"Database error on {request.url.path}: {exc}")
+    return HTMLResponse(
+        "<h1>Database unavailable</h1>"
+        "<p>The reading-stats database could not be read. Check the application log, "
+        "then restore it from a backup or rebuild it.</p>",
+        status_code=503,
+    )
+
 
 # --- Helpers ---
 

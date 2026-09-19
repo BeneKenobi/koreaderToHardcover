@@ -41,6 +41,7 @@ class SyncEngine:
             # self.db.connect()  <- Removed
             self.db.import_books(tmp_path)
             self.db.import_sessions(tmp_path)
+            self.db.checkpoint()
             logger.info("Ingestion complete.")
             return True
         except Exception as e:
@@ -66,6 +67,7 @@ class SyncEngine:
             # self.db.connect() <- Removed
             self.db.import_books(sqlite_path)
             self.db.import_sessions(sqlite_path)
+            self.db.checkpoint()
             logger.info("Ingestion complete.")
             return True
         except Exception as e:

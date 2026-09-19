@@ -1,11 +1,23 @@
-import duckdb
+import logging
 from typing import Optional
+
+import duckdb
+
+logger = logging.getLogger(__name__)
+
+TABLES = ("books", "reading_sessions", "book_mappings")
 
 
 class DatabaseManager:
     def __init__(self, db_path: str = "reading_stats.duckdb"):
         self.db_path = db_path
-        self.create_schema()
+        self.init_error: Optional[str] = None
+        try:
+            self.create_schema()
+        except duckdb.Error as e:
+            # A damaged file must not take the whole app down; check_health() reports it.
+            self.init_error = str(e)
+            logger.error(f"Failed to initialize database {db_path}: {e}")
 
     def get_connection(self):
         """Returns a new DuckDB connection."""
@@ -75,15 +87,43 @@ class DatabaseManager:
             """)
 
             # Indexes
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_books_updated_at ON books(updated_at)"
-            )
+            # An index on books.updated_at turns every UPDATE into DELETE+INSERT, which
+            # appends a new row group per sync and bloats the file. Drop it from old DBs.
+            conn.execute("DROP INDEX IF EXISTS idx_books_updated_at")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_reading_sessions_book_id ON reading_sessions(book_id)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_reading_sessions_start_time ON reading_sessions(start_time)"
             )
+
+    def check_health(self) -> Optional[str]:
+        """Returns None if all tables are readable, otherwise an error description."""
+        if self.init_error:
+            return self.init_error
+        try:
+            with self.get_connection() as conn:
+                for table in TABLES:
+                    # Reads the column metadata of every segment, which is what breaks
+                    # when the checkpointed file is damaged.
+                    conn.execute(
+                        f"SELECT count(*) FROM pragma_storage_info('{table}')"
+                    ).fetchone()
+                    conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+            return None
+        except duckdb.Error as e:
+            logger.error(f"Database health check failed: {e}")
+            return str(e)
+
+    def checkpoint(self) -> bool:
+        """Flushes the WAL into the main database file."""
+        try:
+            with self.get_connection() as conn:
+                conn.execute("CHECKPOINT")
+            return True
+        except duckdb.Error as e:
+            logger.error(f"Checkpoint failed: {e}")
+            return False
 
     def get_local_books(
         self, query: Optional[str] = None, limit: int = 10, offset: int = 0
@@ -131,7 +171,8 @@ class DatabaseManager:
         with self.get_connection() as conn:
             self._attach_koreader(conn, sqlite_path)
             try:
-                # 1. Update existing books
+                # 1. Update existing books, but only rows whose values actually changed.
+                # Rewriting unchanged rows every sync bloats the file (see create_schema).
                 conn.execute("""
                     UPDATE books
                     SET
@@ -146,17 +187,36 @@ class DatabaseManager:
                         highlights = k.highlights,
                         notes = k.notes,
                         last_open = to_timestamp(k.last_open),
-                        status = CASE 
-                            WHEN k.pages > 0 AND (
-                                (CAST(k.total_read_pages AS FLOAT) / CAST(pages AS FLOAT)) >= 0.98 OR
-                                (k.pages - k.total_read_pages) <= 15
-                            ) THEN 'finished'
-                            ELSE 'reading'
-                        END,
+                        status = k.new_status,
                         updated_at = now()
-                    FROM koreader.book k
+                    FROM (
+                        SELECT
+                            *,
+                            CASE
+                                WHEN pages > 0 AND (
+                                    (CAST(total_read_pages AS FLOAT) / CAST(pages AS FLOAT)) >= 0.98 OR
+                                    (pages - total_read_pages) <= 15
+                                ) THEN 'finished'
+                                ELSE 'reading'
+                            END AS new_status
+                        FROM koreader.book
+                    ) k
                     WHERE books.id = k.md5
                     AND k.md5 IS NOT NULL AND k.md5 != ''
+                    AND (
+                        books.koreader_id IS DISTINCT FROM k.id OR
+                        books.title IS DISTINCT FROM k.title OR
+                        books.authors IS DISTINCT FROM k.authors OR
+                        books.series IS DISTINCT FROM k.series OR
+                        books.language IS DISTINCT FROM k.language OR
+                        books.total_pages IS DISTINCT FROM k.pages OR
+                        books.total_read_pages IS DISTINCT FROM k.total_read_pages OR
+                        books.total_read_time IS DISTINCT FROM k.total_read_time OR
+                        books.highlights IS DISTINCT FROM k.highlights OR
+                        books.notes IS DISTINCT FROM k.notes OR
+                        books.last_open IS DISTINCT FROM to_timestamp(k.last_open) OR
+                        books.status IS DISTINCT FROM k.new_status
+                    )
                 """)
 
                 # 2. Insert new books
@@ -201,11 +261,15 @@ class DatabaseManager:
         with self.get_connection() as conn:
             self._attach_koreader(conn, sqlite_path)
             try:
+                # IDs are assigned explicitly: the sequence state is not reliably
+                # persisted across short-lived connections and can lag behind max(id).
                 conn.execute("""
                     INSERT INTO reading_sessions (
-                        book_id, page, start_time, duration, total_pages
+                        id, book_id, page, start_time, duration, total_pages
                     )
                     SELECT 
+                        (SELECT coalesce(max(id), 0) FROM reading_sessions)
+                            + row_number() OVER (ORDER BY b.md5, psd.start_time),
                         b.md5 as book_id,
                         psd.page,
                         to_timestamp(psd.start_time) as start_time,
