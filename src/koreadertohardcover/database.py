@@ -5,7 +5,7 @@ import duckdb
 
 logger = logging.getLogger(__name__)
 
-TABLES = ("books", "reading_sessions", "book_mappings")
+TABLES = ("books", "reading_sessions", "book_mappings", "sync_state")
 
 
 class DatabaseManager:
@@ -83,6 +83,16 @@ class DatabaseManager:
                     mapping_method VARCHAR,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # What was last sent to Hardcover, so unchanged books can be skipped
+            # without querying the API.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sync_state (
+                    local_book_id VARCHAR PRIMARY KEY,
+                    fingerprint VARCHAR,
+                    synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 

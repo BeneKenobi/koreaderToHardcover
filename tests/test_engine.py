@@ -77,7 +77,8 @@ def test_sync_progress_success(MockHC, engine):
     hc_instance.update_progress.return_value = True
 
     # Setup Mock DB Data
-    # Columns: id, title, authors, read_pg, total_pg, status, read_time, last_open, hc_id, ed_id, start_date, last_session_date, max_page
+    # Columns: id, title, authors, read_pg, total_pg, status, read_time, last_open,
+    #          hc_id, ed_id, fingerprint, start_date, last_session_date, max_page
     mock_books = [
         (
             "md5_1",
@@ -89,6 +90,7 @@ def test_sync_progress_success(MockHC, engine):
             3600,
             "2023-01-01",
             "1001",
+            None,
             None,
             "2023-01-01",
             None,
@@ -105,6 +107,7 @@ def test_sync_progress_success(MockHC, engine):
             "2023-01-02",
             "1002",
             "999",
+            None,
             "2023-01-01",
             "2023-02-01",
             200,
@@ -121,6 +124,7 @@ def test_sync_progress_success(MockHC, engine):
             3600,
             "2023-01-03",
             "1003",
+            None,
             None,
             "2023-01-01",
             "2023-02-01",
@@ -180,19 +184,22 @@ def test_sync_progress_success(MockHC, engine):
         edition_id=None,
     )
 
-    # Verify DB Updates (sync_status set to 'synced')
-    # execute is called 1 (select) + 3 (updates) = 4 times
-    assert conn.execute.call_count == 4
+    # Verify DB Updates (sync_status set to 'synced', fingerprint stored)
+    # execute is called 1 (select) + 3 (updates) + 3 (fingerprints) = 7 times
+    assert conn.execute.call_count == 7
     conn.execute.assert_any_call(
-        "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
+        "UPDATE books SET sync_status = 'synced', updated_at = now() "
+        "WHERE id = ? AND sync_status IS DISTINCT FROM 'synced'",
         ["md5_1"],
     )
     conn.execute.assert_any_call(
-        "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
+        "UPDATE books SET sync_status = 'synced', updated_at = now() "
+        "WHERE id = ? AND sync_status IS DISTINCT FROM 'synced'",
         ["md5_2"],
     )
     conn.execute.assert_any_call(
-        "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
+        "UPDATE books SET sync_status = 'synced', updated_at = now() "
+        "WHERE id = ? AND sync_status IS DISTINCT FROM 'synced'",
         ["md5_3"],
     )
 

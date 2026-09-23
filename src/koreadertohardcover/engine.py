@@ -2,7 +2,7 @@ import os
 import tempfile
 import logging
 import math
-from typing import List, Tuple, Optional
+from typing import Any, List, Tuple, Optional
 from koreadertohardcover.database import DatabaseManager
 from koreadertohardcover.config import Config
 from koreadertohardcover.webdav_client import fetch_koreader_db
@@ -10,6 +10,42 @@ from koreadertohardcover.hardcover_client import HardcoverClient
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+def _date_key(value: Any) -> str:
+    """Date part of a timestamp, as a string, for comparing sync state."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value[:10]
+    return value.strftime("%Y-%m-%d")
+
+
+def _fingerprint(
+    hardcover_id: str,
+    edition_id: Optional[str],
+    percentage: int,
+    status: str,
+    seconds: int,
+    start_date: Any,
+    last_read_date: Any,
+) -> str:
+    """
+    Everything that decides what gets sent to Hardcover, as one comparable string.
+    Reading time is rounded to whole minutes, because HardcoverClient treats a
+    smaller difference as unchanged anyway.
+    """
+    return "|".join(
+        [
+            str(hardcover_id),
+            str(edition_id or ""),
+            str(percentage),
+            status,
+            str((seconds or 0) // 60),
+            _date_key(start_date),
+            _date_key(last_read_date) if status == "finished" else "",
+        ]
+    )
 
 
 class SyncEngine:
@@ -99,12 +135,13 @@ class SyncEngine:
                     SELECT 
                         b.id, b.title, b.authors, b.total_read_pages, b.total_pages, 
                         b.status, b.total_read_time, b.last_open,
-                        m.hardcover_id, m.edition_id,
+                        m.hardcover_id, m.edition_id, s.fingerprint,
                         (SELECT MIN(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as start_date,
                         (SELECT MAX(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as last_session_date,
                         (SELECT MAX(page) FROM reading_sessions rs WHERE rs.book_id = b.id) as max_page
                     FROM books b
                     JOIN book_mappings m ON b.id = m.local_book_id
+                    LEFT JOIN sync_state s ON b.id = s.local_book_id
                     ORDER BY b.last_open DESC
                     LIMIT ?
                 """
@@ -125,6 +162,7 @@ class SyncEngine:
                     last_open,
                     hc_id,
                     edition_id,
+                    stored_fingerprint,
                     start_date,
                     last_session_date,
                     max_page,
@@ -141,14 +179,33 @@ class SyncEngine:
                     if percentage >= 98:
                         status = "finished"
 
-                    logger.info(
-                        f"Syncing '{title}' (ID: {hc_id}) - Status: {status} - {percentage}%"
-                    )
-
                     # Use last_session_date if available, otherwise fallback to last_open
                     # This ensures we use the actual reading time instead of just file open time
                     effective_last_read = (
                         last_session_date if last_session_date else last_open
+                    )
+
+                    fingerprint = _fingerprint(
+                        hc_id,
+                        edition_id,
+                        percentage,
+                        status,
+                        read_time,
+                        start_date,
+                        effective_last_read,
+                    )
+
+                    # Nothing changed since the last successful sync, so Hardcover
+                    # already holds this state. Asking it again costs two API calls.
+                    if not force and stored_fingerprint == fingerprint:
+                        logger.info(
+                            f"Skipping '{title}' (ID: {hc_id}) - unchanged since last sync."
+                        )
+                        results.append((title, True))
+                        continue
+
+                    logger.info(
+                        f"Syncing '{title}' (ID: {hc_id}) - Status: {status} - {percentage}%"
                     )
 
                     success = hc.update_progress(
@@ -164,8 +221,15 @@ class SyncEngine:
 
                     if success:
                         conn.execute(
-                            "UPDATE books SET sync_status = 'synced', updated_at = now() WHERE id = ?",
+                            "UPDATE books SET sync_status = 'synced', updated_at = now() "
+                            "WHERE id = ? AND sync_status IS DISTINCT FROM 'synced'",
                             [b_id],
+                        )
+                        conn.execute(
+                            "INSERT INTO sync_state (local_book_id, fingerprint, synced_at) "
+                            "VALUES (?, ?, now()) ON CONFLICT (local_book_id) DO UPDATE "
+                            "SET fingerprint = excluded.fingerprint, synced_at = excluded.synced_at",
+                            [b_id, fingerprint],
                         )
 
                     results.append((title, success))
