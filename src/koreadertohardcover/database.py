@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional
 
 import duckdb
@@ -47,7 +48,14 @@ class DatabaseManager:
 
     def get_connection(self):
         """Returns a new DuckDB connection."""
-        return duckdb.connect(self.db_path)
+        # DuckDB keeps extensions (sqlite for ATTACH) in ~/.duckdb by default, which
+        # an unprivileged container user cannot write. The Docker image preinstalls
+        # them into a readable directory and points DuckDB there.
+        extension_directory = os.getenv("DUCKDB_EXTENSION_DIRECTORY")
+        config = (
+            {"extension_directory": extension_directory} if extension_directory else {}
+        )
+        return duckdb.connect(self.db_path, config=config)
 
     def create_schema(self):
         """Creates the necessary database tables if they don't exist."""

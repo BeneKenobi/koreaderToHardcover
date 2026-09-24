@@ -28,6 +28,11 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV DB_PATH=/data/reading_stats.duckdb \
     LOG_PATH=/data/app.log
 
+# Preinstall DuckDB's sqlite extension (needed to read KOReader's database), so the
+# unprivileged app user never has to download or write extensions at runtime
+ENV DUCKDB_EXTENSION_DIRECTORY=/app/duckdb_extensions
+RUN python -c "import duckdb; duckdb.connect(config={'extension_directory': '$DUCKDB_EXTENSION_DIRECTORY'}).install_extension('sqlite')"
+
 # Fix /data ownership, then run the app as an unprivileged user
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
 
