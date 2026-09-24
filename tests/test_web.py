@@ -87,3 +87,66 @@ def test_confirm_unknown_book_is_404(client) -> None:
     )
 
     assert response.status_code == 404
+
+
+def _seed(web) -> None:
+    with web.engine.db.get_connection() as conn:
+        conn.execute("DELETE FROM books")
+        conn.execute(
+            "INSERT INTO books (id, title, authors, total_read_pages, total_pages, "
+            "status, last_open) VALUES "
+            "('a', 'Dune', 'Frank Herbert', 99, 100, 'reading', '2024-01-02'), "
+            "('b', 'Emma', 'Jane Austen', 10, 100, 'reading', '2024-01-01')"
+        )
+
+
+def test_dashboard_filters_by_query(client) -> None:
+    c, web = client
+    _seed(web)
+
+    response = c.get("/?q=austen", auth=AUTH)
+
+    assert "Emma" in response.text
+    assert "Dune" not in response.text
+
+
+def test_dashboard_shows_effective_status(client) -> None:
+    c, web = client
+    _seed(web)
+
+    response = c.get("/?q=dune", auth=AUTH)
+
+    assert "Finished" in response.text
+
+
+def test_dashboard_ignores_bad_page(client) -> None:
+    c, _ = client
+
+    assert c.get("/?page=abc", auth=AUTH).status_code == 200
+
+
+def test_status_endpoint(client) -> None:
+    c, web = client
+
+    response = c.get("/status", auth=AUTH)
+
+    assert response.json()["state"] == web.sync_status["state"]
+
+
+def test_username_failure_is_not_retried_immediately(client, monkeypatch) -> None:
+    _, web = client
+    calls = []
+
+    class FailingClient:
+        def __init__(self, config):
+            calls.append(1)
+            raise RuntimeError("down")
+
+    monkeypatch.setattr(web.config, "HARDCOVER_BEARER_TOKEN", "token")
+    monkeypatch.setattr(web, "HardcoverClient", FailingClient)
+    monkeypatch.setitem(web._username_cache, "value", None)
+    monkeypatch.setitem(web._username_cache, "failed_at", None)
+
+    assert web.hardcover_username() is None
+    assert web.hardcover_username() is None
+    assert len(calls) == 1

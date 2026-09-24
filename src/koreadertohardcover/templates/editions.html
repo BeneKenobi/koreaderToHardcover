@@ -1,69 +1,298 @@
 {% extends "base.html" %}
 
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simple-datatables@10.3.0/dist/style.css"
+      integrity="sha384-CinX6s1UC1GpaQwL9eKshF7JhtC8H2xchDD0dWqlCgZ8t+GCCcjluxCgmsbVpdEh" crossorigin="anonymous">
+<style>
+    .filters {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem 2rem;
+        align-items: flex-end;
+        margin-bottom: 1.5rem;
+    }
+    .filters label { margin-bottom: 0.5rem; }
+    .filters select, .filters input { margin-bottom: 0; }
+    .filter-group { min-width: 18rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .chip {
+        margin: 0;
+        padding: 0 1.2rem;
+        height: 3.2rem;
+        line-height: 3.2rem;
+        font-size: 1.1rem;
+    }
+    .chip.button-outline { opacity: 0.7; }
+    .edition-title { font-weight: bold; }
+    .badge-row { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+    .datatable-wrapper .datatable-container { border-bottom: none; overflow-x: auto; }
+    #editions th, #editions td { padding: 0.8rem 0.6rem; vertical-align: middle; }
+    #editions th, #editions .datatable-sorter {
+        font-size: 1.3rem;
+        text-transform: none;
+        letter-spacing: 0;
+        font-weight: bold;
+        color: var(--rp-subtle);
+    }
+    /* The sort headers are <button>s, which Milligram styles as big buttons. */
+    #editions .datatable-sorter,
+    #editions .datatable-sorter:hover,
+    #editions .datatable-sorter:focus {
+        background: none;
+        border: none;
+        height: auto;
+        line-height: inherit;
+        margin: 0;
+        padding: 0 1.6rem 0 0;
+    }
+    #editions td[data-label="Edition"] { min-width: 22rem; }
+    #editions td[data-label="Released"] { white-space: nowrap; }
+    .chip.chip-empty { opacity: 0.35; }
+    #editions th:first-child, #editions td:first-child { padding-left: 0; }
+    #editions th:last-child, #editions td:last-child { padding-right: 0; }
+    .datatable-wrapper .datatable-table > thead > tr > th { border-bottom: 0.1rem solid var(--rp-overlay); }
+    .datatable-sorter::before { border-top-color: var(--rp-subtle); }
+    .datatable-sorter::after { border-bottom-color: var(--rp-subtle); }
+    .datatable-pagination a, .datatable-pagination button { color: var(--rp-foam); }
+    .datatable-pagination .datatable-active a,
+    .datatable-pagination .datatable-active button,
+    .datatable-pagination a:hover,
+    .datatable-pagination button:hover {
+        background-color: var(--rp-highlight-med);
+        color: var(--rp-text);
+    }
+    .datatable-info { color: var(--rp-subtle); }
+    .datatable-empty { color: var(--rp-subtle); }
+    @media (max-width: 640px) {
+        .filter-group { min-width: 100%; }
+        table.responsive td[data-label="Cover"] { display: none; }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <h2>Select Edition for: {{ title }}</h2>
-<p class="mb-2">Local Pages: {{ local_pages }}</p>
-
-{% if editions %}
-    <div class="card">
-        <table>
-            <thead>
-                <tr>
-                    <th>Format</th>
-                    <th>Language</th>
-                    <th>Pages</th>
-                    <th>Released</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for edition in editions %}
-                <tr>
-                    <td>{{ edition.edition_format or 'Unknown' }}</td>
-                    <td>{{ edition.language or 'Unknown' }}</td>
-                    <td>
-                        {% if edition.pages %}
-                            {% set diff = (edition.pages - local_pages) | abs %}
-                            {% if diff < 10 %}
-                                <span style="color: var(--rp-pine); font-weight: bold;">{{ edition.pages }}</span>
-                            {% else %}
-                                {{ edition.pages }}
-                            {% endif %}
-                        {% else %}
-                            ?
-                        {% endif %}
-                    </td>
-                    <td>{{ edition.release_date or '?' }}</td>
-                    <td>
-                        <form method="post" action="/map/{{ book_id }}/confirm">
-                            <input type="hidden" name="hardcover_id" value="{{ hardcover_id }}">
-                            <input type="hidden" name="edition_id" value="{{ edition.id }}">
-                            <input type="hidden" name="title" value="{{ title }}">
-                            <input type="hidden" name="author" value="{{ author }}">
-                            <input type="hidden" name="slug" value="{{ slug }}">
-                            <button type="submit" class="button button-small">Select</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-{% else %}
-    <div class="alert alert-warning">No editions found.</div>
-{% endif %}
+<p class="mb-2">
+    Local book: <strong>{{ book.title }}</strong>
+    | Language: {{ book.language or 'unknown' }}
+    | Pages: {{ local_pages or '?' }}
+    {% if slug %}| <a href="https://hardcover.app/books/{{ slug }}" target="_blank" rel="noopener">View book on Hardcover</a>{% endif %}
+</p>
 
 <div class="card">
-    <h4>Generic Mapping</h4>
-    <p>Map to the book without a specific edition.</p>
-    <form method="post" action="/map/{{ book_id }}/confirm">
-        <input type="hidden" name="hardcover_id" value="{{ hardcover_id }}">
-        <input type="hidden" name="title" value="{{ title }}">
-        <input type="hidden" name="author" value="{{ author }}">
-        <input type="hidden" name="slug" value="{{ slug }}">
-        <button type="submit" class="button">Use Generic Book</button>
-    </form>
+    <div class="row">
+        <div class="column column-67">
+            <h4 style="margin-bottom: 0.5rem;">No specific edition?</h4>
+            <p class="muted" style="margin-bottom: 0;">Map to the book itself. Progress uses the book's default page count.</p>
+        </div>
+        <div class="column text-right">
+            <form method="post" action="/map/{{ book_id }}/confirm" style="margin: 0;">
+                <input type="hidden" name="hardcover_id" value="{{ hardcover_id }}">
+                <input type="hidden" name="title" value="{{ title }}">
+                <input type="hidden" name="author" value="{{ author }}">
+                <input type="hidden" name="slug" value="{{ slug }}">
+                <button type="submit" class="button button-outline" style="margin: 0;">Use Generic Book</button>
+            </form>
+        </div>
+    </div>
 </div>
 
+{% if editions %}
+<div class="card">
+    <div class="filters">
+        <div class="filter-group">
+            <label for="language-filter">Language</label>
+            <select id="language-filter">
+                <option value="">All languages</option>
+                {% for language in languages %}
+                <option value="{{ language }}">{{ language }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label>Format</label>
+            <div class="chips" id="format-filter">
+                {% for group in format_groups %}
+                <button type="button" class="button chip" data-group="{{ group.name }}" aria-pressed="true">
+                    {{ group.name }} (<span class="chip-count">{{ group.count }}</span>)
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="filter-group">
+            <label for="text-filter">Search</label>
+            <input type="search" id="text-filter" placeholder="Title, publisher, ISBN…">
+        </div>
+    </div>
+
+    <table id="editions" class="responsive">
+        <thead>
+            <tr>
+                <th data-sortable="false">Cover</th>
+                <th>Edition</th>
+                <th>Format</th>
+                <th>Language</th>
+                <th data-type="number">Pages</th>
+                <th>Released</th>
+                <th data-type="number">Readers</th>
+                <th data-sortable="false"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for edition in editions %}
+            <tr>
+                <td data-label="Cover">
+                    {% if edition.image_url %}
+                        <img class="cover" src="{{ edition.image_url }}" alt="" loading="lazy">
+                    {% else %}
+                        <div class="cover-placeholder"></div>
+                    {% endif %}
+                </td>
+                <td data-label="Edition">
+                    <div>
+                        {% if slug %}
+                            <a class="edition-title" href="https://hardcover.app/books/{{ slug }}/editions/{{ edition.id }}" target="_blank" rel="noopener">{{ edition.title }}</a>
+                        {% else %}
+                            <span class="edition-title">{{ edition.title }}</span>
+                        {% endif %}
+                        <div class="muted">
+                            {{ edition.publisher or 'Unknown publisher' }}{% if edition.isbn %} · ISBN {{ edition.isbn }}{% endif %}
+                        </div>
+                        {% if loop.index <= 3 and edition.language_match %}
+                        <div class="badge-row"><span class="badge badge-success">Best match</span></div>
+                        {% endif %}
+                    </div>
+                </td>
+                <td data-label="Format">
+                    <div>
+                        <span class="badge badge-neutral">{{ edition.format_group }}</span>
+                        <div class="muted">{{ edition.edition_format or 'Unknown' }}</div>
+                    </div>
+                </td>
+                <td data-label="Language">{{ edition.language }}</td>
+                <td data-label="Pages">
+                    {% if edition.pages %}
+                        {% if edition.pages_match %}
+                            <span style="color: var(--rp-pine); font-weight: bold;">{{ edition.pages }}</span>
+                        {% else %}
+                            {{ edition.pages }}
+                        {% endif %}
+                    {% else %}
+                        ?
+                    {% endif %}
+                </td>
+                <td data-label="Released">{{ edition.release_date or '?' }}</td>
+                <td data-label="Readers">{{ edition.users_count }}</td>
+                <td data-label="">
+                    <form method="post" action="/map/{{ book_id }}/confirm" style="margin: 0;">
+                        <input type="hidden" name="hardcover_id" value="{{ hardcover_id }}">
+                        <input type="hidden" name="edition_id" value="{{ edition.id }}">
+                        <input type="hidden" name="title" value="{{ title }}">
+                        <input type="hidden" name="author" value="{{ author }}">
+                        <input type="hidden" name="slug" value="{{ slug }}">
+                        <button type="submit" class="button button-small" style="margin: 0;">Select</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+    <div class="alert alert-warning">No editions found. Use the generic book above.</div>
+{% endif %}
+
 <a href="/map/{{ book_id }}" class="button button-outline mt-2">Back to Search</a>
+{% endblock %}
+
+{% block scripts %}
+{% if editions %}
+<script src="https://cdn.jsdelivr.net/npm/simple-datatables@10.3.0/dist/umd/simple-datatables.js"
+        integrity="sha384-OMR/OfeQC/fStE5yr0SBMKPPfMHctC+Ebr+QVzjdXw1FqbB0iBKgFkrAzvjhYByo" crossorigin="anonymous"></script>
+<script>
+    (function () {
+        if (!window.simpleDatatables) return; // CDN blocked: the plain table still works.
+
+        var FORMAT_COLUMN = 2;
+        var LANGUAGE_COLUMN = 3;
+        var TEXT_COLUMNS = [1, 2, 3];
+
+        var table = new simpleDatatables.DataTable("#editions", {
+            perPage: 25,
+            // No fixed pixel widths, so the table can shrink with the page.
+            fixedColumns: false,
+            perPageSelect: [10, 25, 50, 100],
+            searchable: true,
+            // Keep the server's ranking until the user sorts a column.
+            sortable: true,
+            labels: {
+                noRows: "No editions match these filters",
+                info: "Showing {start}–{end} of {rows} editions",
+            },
+            // Own filter controls above the table, so no built-in search box.
+            template: function (options) {
+                return "<div class='" + options.classes.container + "'></div>" +
+                    "<div class='" + options.classes.bottom + "'>" +
+                    "<div class='" + options.classes.info + "'></div>" +
+                    "<nav class='" + options.classes.pagination + "'></nav></div>";
+            },
+        });
+
+        // Language and format group per edition, to keep the chip counts in step
+        // with the language filter.
+        var editionFacets = {{ facets | tojson }};
+
+        var languageSelect = document.getElementById("language-filter");
+        var textInput = document.getElementById("text-filter");
+        var chips = Array.prototype.slice.call(document.querySelectorAll("#format-filter .chip"));
+
+        function updateChipCounts() {
+            chips.forEach(function (chip) {
+                var count = editionFacets.filter(function (e) {
+                    return e.group === chip.dataset.group &&
+                        (!languageSelect.value || e.language === languageSelect.value);
+                }).length;
+                chip.querySelector(".chip-count").textContent = count;
+                chip.classList.toggle("chip-empty", count === 0);
+            });
+        }
+
+        function applyFilters() {
+            updateChipCounts();
+            var queries = [];
+            if (languageSelect.value) {
+                queries.push({ terms: [languageSelect.value], columns: [LANGUAGE_COLUMN] });
+            }
+            var active = chips.filter(function (c) { return c.getAttribute("aria-pressed") === "true"; });
+            if (active.length !== chips.length) {
+                // An impossible term hides everything when no format is selected.
+                var groups = active.map(function (c) { return c.dataset.group; });
+                queries.push({ terms: groups.length ? groups : ["\u0000"], columns: [FORMAT_COLUMN] });
+            }
+            var text = textInput.value.trim();
+            if (text) {
+                queries.push({ terms: [text], columns: TEXT_COLUMNS });
+            }
+            if (queries.length) {
+                table.multiSearch(queries);
+            } else {
+                table.search("");
+            }
+        }
+
+        chips.forEach(function (chip) {
+            chip.addEventListener("click", function () {
+                var pressed = chip.getAttribute("aria-pressed") === "true";
+                chip.setAttribute("aria-pressed", pressed ? "false" : "true");
+                chip.classList.toggle("button-outline", pressed);
+                applyFilters();
+            });
+        });
+        languageSelect.addEventListener("change", applyFilters);
+        textInput.addEventListener("input", applyFilters);
+
+        applyFilters();
+    })();
+</script>
+{% endif %}
 {% endblock %}

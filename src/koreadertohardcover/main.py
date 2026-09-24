@@ -13,6 +13,8 @@ from koreadertohardcover.engine import SyncEngine
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+# httpx logs every request at INFO, which buries the sync output.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 @click.group()

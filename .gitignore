@@ -20,3 +20,6 @@ data/
 
 # Generated session key (web dashboard)
 secret_key
+
+# Playwright MCP screenshots and snapshots
+.playwright-mcp/

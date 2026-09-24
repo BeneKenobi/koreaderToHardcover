@@ -195,7 +195,8 @@ class DatabaseManager:
                     b.total_read_pages,
                     b.total_pages,
                     b.sync_status,
-                    (SELECT MAX(page) FROM reading_sessions rs WHERE rs.book_id = b.id) AS max_page
+                    (SELECT MAX(page) FROM reading_sessions rs WHERE rs.book_id = b.id) AS max_page,
+                    b.status
                 FROM books b
                 LEFT JOIN book_mappings m ON b.id = m.local_book_id
                 {where_clause}

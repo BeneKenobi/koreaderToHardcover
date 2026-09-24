@@ -8,16 +8,18 @@
     </div>
     <div class="column text-right">
         <div class="card" style="padding: 1rem; display: inline-block; text-align: left;">
-            <p style="margin-bottom: 0;"><strong>Sync Status:</strong> 
+            <p style="margin-bottom: 0;"><strong>Sync Status:</strong>
+                <span id="sync-state">
                 {% if sync_status.state == 'running' %}
                     <span class="badge badge-warning">Running...</span>
                 {% else %}
                     <span class="badge badge-neutral">Idle</span>
                 {% endif %}
+                </span>
             </p>
             {% if sync_status.last_run %}
                 <p style="margin-bottom: 0; font-size: 0.8em; color: var(--rp-subtle);">Last Run: {{ sync_status.last_run }}</p>
-                <p style="margin-bottom: 0; font-size: 0.8em;">Result: 
+                <p style="margin-bottom: 0; font-size: 0.8em;">Result:
                     {% if 'Error' in sync_status.last_result|string %}
                         <span style="color: var(--rp-love);">{{ sync_status.last_result }}</span>
                     {% else %}
@@ -26,12 +28,23 @@
                 </p>
             {% endif %}
         </div>
-        <p>Total Books: <strong>{{ total_count }}</strong></p>
+        <p>{% if query %}Matching{% else %}Total{% endif %} Books: <strong>{{ total_count }}</strong></p>
     </div>
 </div>
 
+<form method="get" action="/">
+    <div class="row">
+        <div class="column column-80">
+            <input type="search" name="q" placeholder="Filter by title or author..." value="{{ query or '' }}">
+        </div>
+        <div class="column column-20">
+            <input class="button-primary" type="submit" value="Filter">
+        </div>
+    </div>
+</form>
+
 <div class="card">
-    <table>
+    <table class="responsive">
         <thead>
             <tr>
                 <th>Title</th>
@@ -45,27 +58,40 @@
         <tbody>
             {% for book in books %}
             <tr>
-                <td>
+                <td data-label="Title">
                     {% if book.hardcover_slug %}
-                        <a href="https://hardcover.app/books/{{ book.hardcover_slug }}" target="_blank" style="color: var(--rp-text); text-decoration: underline;"><strong>{{ book.title }}</strong></a>
+                        <a href="https://hardcover.app/books/{{ book.hardcover_slug }}" target="_blank" rel="noopener" style="color: var(--rp-text); text-decoration: underline;"><strong>{{ book.title }}</strong></a>
                     {% else %}
                         <strong>{{ book.title }}</strong>
                     {% endif %}
                 </td>
-                <td>{{ book.author }}</td>
-                <td>{{ book.progress }}%</td>
-                <td>{{ book.last_read }}</td>
-                <td>
-                    {% if book.is_mapped %}
-                        <span class="badge badge-success">Mapped</span>
-                        {% if book.sync_status == 'synced' %}
-                            <span class="badge badge-neutral" style="font-size: 0.8em">Synced</span>
-                        {% endif %}
-                    {% else %}
-                        <span class="badge badge-warning">Unmapped</span>
-                    {% endif %}
+                <td data-label="Author">{{ book.author or 'Unknown' }}</td>
+                <td data-label="Progress">
+                    <div>
+                        {{ book.progress }}%
+                        <div class="progress"><span style="width: {{ [book.progress, 100] | min }}%"></span></div>
+                    </div>
                 </td>
-                <td>
+                <td data-label="Last Read">{{ book.last_read or 'Never' }}</td>
+                <td data-label="Status">
+                    <div class="badge-row" style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+                        {% if book.status == 'finished' %}
+                            <span class="badge badge-success">Finished</span>
+                        {% else %}
+                            <span class="badge badge-neutral">Reading</span>
+                        {% endif %}
+                        {% if book.is_mapped %}
+                            {% if book.sync_status == 'synced' %}
+                                <span class="badge badge-neutral">Synced</span>
+                            {% else %}
+                                <span class="badge badge-neutral">Mapped</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="badge badge-warning">Unmapped</span>
+                        {% endif %}
+                    </div>
+                </td>
+                <td data-label="">
                     {% if book.is_mapped %}
                         <a href="/map/{{ book.id }}" class="button button-outline button-small">Remap</a>
                     {% else %}
@@ -75,24 +101,54 @@
             </tr>
             {% else %}
             <tr>
-                <td colspan="6" class="text-center">No books found. Try syncing first.</td>
+                <td colspan="6" class="text-center">
+                    {% if query %}No books match "{{ query }}".{% else %}No books found. Try syncing first.{% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
-    
+
     <!-- Pagination -->
+    {% set q_param = '&q=' ~ (query | urlencode) if query else '' %}
     <div class="row">
         <div class="column">
             {% if page > 1 %}
-                <a href="/?page={{ page - 1 }}" class="button button-outline">Previous</a>
+                <a href="/?page={{ page - 1 }}{{ q_param }}" class="button button-outline">Previous</a>
             {% endif %}
         </div>
         <div class="column text-right">
             {% if (page * limit) < total_count %}
-                <a href="/?page={{ page + 1 }}" class="button button-outline">Next</a>
+                <a href="/?page={{ page + 1 }}{{ q_param }}" class="button button-outline">Next</a>
             {% endif %}
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+{% if sync_status.state == 'running' or sync_started %}
+<script>
+    // Poll the sync state and reload once the running (or just queued) sync is done.
+    (function () {
+        var initialLastRun = {{ sync_status.last_run | tojson }};
+        var badge = document.getElementById("sync-state");
+        badge.innerHTML = '<span class="badge badge-warning">Running...</span>';
+
+        function poll() {
+            fetch("/status", { credentials: "same-origin" })
+                .then(function (response) { return response.json(); })
+                .then(function (status) {
+                    if (status.state === "idle" && status.last_run !== initialLastRun) {
+                        window.location.reload();
+                    } else {
+                        setTimeout(poll, 3000);
+                    }
+                })
+                .catch(function () { setTimeout(poll, 10000); });
+        }
+        setTimeout(poll, 2000);
+    })();
+</script>
+{% endif %}
 {% endblock %}

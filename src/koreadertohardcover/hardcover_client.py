@@ -120,22 +120,61 @@ class HardcoverClient:
                     "author_name": author_name,
                     "pages": doc.get("pages"),
                     "slug": doc.get("slug"),
+                    "image_url": (doc.get("image") or {}).get("url"),
+                    "release_year": doc.get("release_year"),
+                    "users_count": doc.get("users_count") or 0,
                 }
             )
         return results
 
+    def shelf_book_ids(self, book_ids: List[int]) -> set[int]:
+        """Returns the subset of book IDs that are on the user's shelf."""
+        if not book_ids:
+            return set()
+        gql = """
+        query ShelfBookIds($ids: [Int!]) {
+          me {
+            user_books(where: {book_id: {_in: $ids}}) {
+              book_id
+            }
+          }
+        }
+        """
+        data = self._execute_query(gql, {"ids": book_ids})
+        me = data.get("me", [])
+        if not me:
+            return set()
+        return {ub["book_id"] for ub in me[0].get("user_books", [])}
+
     def get_editions(self, book_id: int) -> List[Dict[str, Any]]:
-        """Fetches editions for a given book ID."""
+        """Fetches editions for a given book ID, most read first."""
         gql = """
         query GetEditions($book_id: Int!) {
-          editions(where: {book_id: {_eq: $book_id}}, order_by: {release_date: desc}) {
+          editions(
+            where: {book_id: {_eq: $book_id}}
+            order_by: {users_count: desc_nulls_last}
+          ) {
             id
             title
             pages
             edition_format
             release_date
+            isbn_13
+            isbn_10
+            users_count
+            publisher {
+              name
+            }
+            image {
+              url
+            }
             language {
               language
+              code2
+              code3
+            }
+            reading_format {
+              format
             }
           }
         }
@@ -143,8 +182,7 @@ class HardcoverClient:
         data = self._execute_query(gql, {"book_id": book_id})
         results = []
         for ed in data.get("editions", []):
-            lang_data = ed.get("language")
-            language = lang_data.get("language") if lang_data else "Unknown"
+            lang_data = ed.get("language") or {}
 
             results.append(
                 {
@@ -153,7 +191,17 @@ class HardcoverClient:
                     "pages": ed.get("pages"),
                     "edition_format": ed.get("edition_format"),
                     "release_date": ed.get("release_date"),
-                    "language": language,
+                    "language": lang_data.get("language") or "Unknown",
+                    "language_codes": [
+                        code
+                        for code in (lang_data.get("code2"), lang_data.get("code3"))
+                        if code
+                    ],
+                    "isbn": ed.get("isbn_13") or ed.get("isbn_10"),
+                    "publisher": (ed.get("publisher") or {}).get("name"),
+                    "image_url": (ed.get("image") or {}).get("url"),
+                    "reading_format": (ed.get("reading_format") or {}).get("format"),
+                    "users_count": ed.get("users_count") or 0,
                 }
             )
         return results

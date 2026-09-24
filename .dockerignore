@@ -16,3 +16,4 @@ docs/
 tests/
 scripts/
 secret_key
+.playwright-mcp

@@ -9,7 +9,7 @@ from fastapi import (
 )
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
@@ -22,10 +22,20 @@ from logging.handlers import RotatingFileHandler
 import datetime
 import secrets
 import threading
+import time
 
 import duckdb
 
-from koreadertohardcover.engine import SyncEngine, progress_percentage
+from koreadertohardcover.engine import (
+    SyncEngine,
+    effective_status,
+    progress_percentage,
+)
+from koreadertohardcover.ranking import (
+    FORMAT_GROUPS,
+    rank_editions,
+    rank_search_results,
+)
 from koreadertohardcover.config import Config
 from koreadertohardcover.hardcover_client import HardcoverClient
 
@@ -41,6 +51,8 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(), file_handler],
 )
 logger = logging.getLogger("web")
+# httpx logs every request at INFO, which buries the sync output.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Attach file handler to Uvicorn loggers to capture server logs in the file
 logging.getLogger("uvicorn").addHandler(file_handler)
@@ -54,6 +66,35 @@ engine = SyncEngine(db_path=db_path, config=config)
 templates = Jinja2Templates(
     directory=os.path.join(os.path.dirname(__file__), "templates")
 )
+
+# Hardcover username for the Profile link. Failed lookups are retried after a pause,
+# so a Hardcover outage does not add an API call to every page view.
+USERNAME_RETRY_SECONDS = 300
+_username_cache: dict = {"value": None, "failed_at": None}
+
+
+def hardcover_username() -> Optional[str]:
+    if _username_cache["value"] or not config.HARDCOVER_BEARER_TOKEN:
+        return _username_cache["value"]
+    failed_at = _username_cache["failed_at"]
+    if failed_at and time.monotonic() - failed_at < USERNAME_RETRY_SECONDS:
+        return None
+
+    hc = None
+    try:
+        hc = HardcoverClient(config)
+        _username_cache["value"] = hc.get_me().get("username")
+    except Exception as e:
+        logger.error(f"Failed to fetch user info: {e}")
+    finally:
+        if hc:
+            hc.close()
+    if not _username_cache["value"]:
+        _username_cache["failed_at"] = time.monotonic()
+    return _username_cache["value"]
+
+
+templates.env.globals["hardcover_username"] = hardcover_username
 
 # Global Sync Status
 sync_status = {
@@ -241,74 +282,89 @@ def scheduled_sync():
 def fetch_book(book_id: str) -> Optional[dict]:
     with engine.db.get_connection() as conn:
         row = conn.execute(
-            "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
+            "SELECT title, authors, total_pages, language FROM books WHERE id = ?",
+            [book_id],
         ).fetchone()
     if not row:
         return None
-    return {"id": book_id, "title": row[0], "author": row[1], "total_pages": row[2]}
+    # KOReader separates several authors with newlines.
+    first_author = (row[1] or "").split("\n")[0].strip()
+    return {
+        "id": book_id,
+        "title": row[0],
+        "author": row[1],
+        "total_pages": row[2],
+        "language": row[3],
+        "default_query": f"{row[0]} {first_author}".strip(),
+    }
+
+
+def parse_page(value: Optional[str]) -> int:
+    try:
+        return max(int(value or 1), 1)
+    except ValueError:
+        return 1
 
 
 # --- Routes ---
 
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, page: int = 1):
+def dashboard(request: Request, page: Optional[str] = None, q: Optional[str] = None):
     """Main Dashboard."""
     message = request.session.pop("message", None)
     message_type = request.session.pop("message_type", None)
+    sync_started = request.session.pop("sync_started", False)
 
-    # Fetch Hardcover Username (Cache in session)
-    username = request.session.get("hardcover_username")
-    if not username and config.HARDCOVER_BEARER_TOKEN:
-        hc = None
-        try:
-            hc = HardcoverClient(config)
-            me = hc.get_me()
-            username = me.get("username")
-            if username:
-                request.session["hardcover_username"] = username
-        except Exception as e:
-            logger.error(f"Failed to fetch user info: {e}")
-        finally:
-            if hc:
-                hc.close()
-
-    page = max(page, 1)
+    page_number = parse_page(page)
+    query = (q or "").strip() or None
     limit = 10
-    offset = (page - 1) * limit
+    offset = (page_number - 1) * limit
 
-    books, total_count = engine.db.get_local_books(limit=limit, offset=offset)
+    books, total_count = engine.db.get_local_books(
+        query=query, limit=limit, offset=offset
+    )
 
-    book_list = [
-        {
-            "id": b[0],
-            "title": b[1],
-            "author": b[2],
-            "last_read": b[3],
-            "is_mapped": bool(b[4]),
-            "hardcover_slug": b[5],
-            "hardcover_id": b[6],
-            # Same number the sync sends to Hardcover.
-            "progress": progress_percentage(b[7], b[10], b[8]),
-            "sync_status": b[9],
-        }
-        for b in books
-    ]
+    book_list = []
+    for b in books:
+        # Same numbers the sync sends to Hardcover.
+        progress = progress_percentage(b[7], b[10], b[8])
+        book_list.append(
+            {
+                "id": b[0],
+                "title": b[1],
+                "author": b[2],
+                "last_read": b[3],
+                "is_mapped": bool(b[4]),
+                "hardcover_slug": b[5],
+                "hardcover_id": b[6],
+                "progress": progress,
+                "sync_status": b[9],
+                "status": effective_status(b[11], progress),
+            }
+        )
 
     return templates.TemplateResponse(
         request,
         "dashboard.html",
         {
             "books": book_list,
-            "page": page,
+            "page": page_number,
             "limit": limit,
             "total_count": total_count,
+            "query": query,
             "message": message,
             "message_type": message_type,
             "sync_status": sync_status,
-            "username": username,
+            "sync_started": sync_started,
         },
     )
+
+
+@app.get("/status")
+def get_sync_status() -> JSONResponse:
+    """Sync state for the dashboard's live status badge."""
+    return JSONResponse(sync_status)
 
 
 @app.post("/sync")
@@ -319,6 +375,7 @@ async def trigger_sync(request: Request, background_tasks: BackgroundTasks):
         request.session["message_type"] = "error"
     else:
         background_tasks.add_task(scheduled_sync)
+        request.session["sync_started"] = True
         request.session["message"] = "Sync started in background"
         request.session["message_type"] = "success"
     return RedirectResponse(url="/", status_code=303)
@@ -339,30 +396,17 @@ def view_logs(request: Request):
     return templates.TemplateResponse(request, "logs.html", {"logs": recent_logs})
 
 
-@app.get("/map/{book_id}", response_class=HTMLResponse)
-def map_book_ui(request: Request, book_id: str):
-    """Mapping Interface - Search."""
-    book_obj = fetch_book(book_id)
-    if not book_obj:
-        request.session["message"] = "Book not found"
-        request.session["message_type"] = "error"
-        return RedirectResponse(url="/", status_code=303)
-
-    return templates.TemplateResponse(
-        request, "mapping.html", {"book": book_obj, "query": None}
-    )
-
-
-@app.post("/map/{book_id}/search", response_class=HTMLResponse)
-def map_book_search(request: Request, book_id: str, query: str = Form(...)):
-    """Handle Search."""
-    book_obj = fetch_book(book_id)
-    if not book_obj:
-        raise HTTPException(status_code=404, detail="Book not found")
-
+def render_search(request: Request, book_obj: dict, query: str) -> HTMLResponse:
     hc = HardcoverClient(config)
+    error = None
+    results: list = []
     try:
         results = hc.search_books(query)
+        shelf_ids = hc.shelf_book_ids([int(r["id"]) for r in results])
+        results = rank_search_results(results, shelf_ids)
+    except Exception as e:
+        logger.error(f"Hardcover search for '{query}' failed: {e}")
+        error = "Hardcover search failed. Check the logs."
     finally:
         hc.close()
 
@@ -373,8 +417,31 @@ def map_book_search(request: Request, book_id: str, query: str = Form(...)):
             "book": book_obj,
             "query": query,
             "search_results": results,
+            "error": error,
         },
     )
+
+
+@app.get("/map/{book_id}", response_class=HTMLResponse)
+def map_book_ui(request: Request, book_id: str):
+    """Mapping Interface - searches for the book right away."""
+    book_obj = fetch_book(book_id)
+    if not book_obj:
+        request.session["message"] = "Book not found"
+        request.session["message_type"] = "error"
+        return RedirectResponse(url="/", status_code=303)
+
+    return render_search(request, book_obj, book_obj["default_query"])
+
+
+@app.post("/map/{book_id}/search", response_class=HTMLResponse)
+def map_book_search(request: Request, book_id: str, query: str = Form(...)):
+    """Handle Search."""
+    book_obj = fetch_book(book_id)
+    if not book_obj:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    return render_search(request, book_obj, query)
 
 
 @app.post("/map/{book_id}/select", response_class=HTMLResponse)
@@ -396,11 +463,13 @@ def map_book_select(
         editions = hc.get_editions(hardcover_id)
     finally:
         hc.close()
+    editions = rank_editions(editions, book_obj["language"], book_obj["total_pages"])
 
     return templates.TemplateResponse(
         request,
         "editions.html",
         {
+            "book": book_obj,
             "book_id": book_id,
             "hardcover_id": hardcover_id,
             "title": title,
@@ -408,6 +477,16 @@ def map_book_select(
             "slug": slug,
             "local_pages": book_obj["total_pages"] or 0,
             "editions": editions,
+            "languages": sorted({e["language"] for e in editions}),
+            "facets": [
+                {"language": e["language"], "group": e["format_group"]}
+                for e in editions
+            ],
+            "format_groups": [
+                {"name": group, "count": count}
+                for group in FORMAT_GROUPS
+                if (count := sum(e["format_group"] == group for e in editions))
+            ],
         },
     )
 

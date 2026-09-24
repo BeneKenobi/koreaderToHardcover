@@ -27,6 +27,13 @@ def progress_percentage(
     return math.ceil(current / total_pages * 100)
 
 
+def effective_status(status: Optional[str], percentage: int) -> str:
+    """The status sent to Hardcover: 'finished' from 98% on, else the local status."""
+    if percentage >= 98:
+        return "finished"
+    return status or "reading"
+
+
 def _date_key(value: Any) -> str:
     """Date part of a timestamp, as a string, for comparing sync state."""
     if value is None:
@@ -197,9 +204,7 @@ class SyncEngine:
         percentage = progress_percentage(
             book["total_read_pages"], book["max_page"], book["total_pages"]
         )
-        status = book["status"] or "reading"
-        if percentage >= 98:
-            status = "finished"
+        status = effective_status(book["status"], percentage)
         read_time = book["total_read_time"] or 0
 
         # Use last_session_date if available, otherwise fallback to last_open
