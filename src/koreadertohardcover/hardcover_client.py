@@ -146,6 +146,41 @@ class HardcoverClient:
             return set()
         return {ub["book_id"] for ub in me[0].get("user_books", [])}
 
+    def get_cover_urls(
+        self, book_ids: List[int], edition_ids: List[int]
+    ) -> tuple[Dict[int, str], Dict[int, str]]:
+        """Returns cover URLs as ({book_id: url}, {edition_id: url}) in one request."""
+        if not book_ids and not edition_ids:
+            return {}, {}
+        gql = """
+        query CoverUrls($book_ids: [Int!], $edition_ids: [Int!]) {
+          books(where: {id: {_in: $book_ids}}) {
+            id
+            image {
+              url
+            }
+          }
+          editions(where: {id: {_in: $edition_ids}}) {
+            id
+            image {
+              url
+            }
+          }
+        }
+        """
+        data = self._execute_query(
+            gql, {"book_ids": book_ids, "edition_ids": edition_ids}
+        )
+
+        def urls(rows: List[Dict[str, Any]]) -> Dict[int, str]:
+            return {
+                row["id"]: row["image"]["url"]
+                for row in rows
+                if (row.get("image") or {}).get("url")
+            }
+
+        return urls(data.get("books", [])), urls(data.get("editions", []))
+
     def get_editions(self, book_id: int) -> List[Dict[str, Any]]:
         """Fetches editions for a given book ID, most read first."""
         gql = """

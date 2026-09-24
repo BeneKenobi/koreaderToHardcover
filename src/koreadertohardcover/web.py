@@ -99,6 +99,8 @@ def hardcover_username() -> Optional[str]:
 
 templates.env.globals["hardcover_username"] = hardcover_username
 
+HARDCOVER_ASSETS = "https://assets.hardcover.app/"
+
 # Global Sync Status
 sync_status = {
     "state": "idle",  # idle, running
@@ -344,6 +346,7 @@ def dashboard(request: Request, page: Optional[str] = None, q: Optional[str] = N
                 "progress": progress,
                 "sync_status": b[9],
                 "status": effective_status(b[11], progress),
+                "image_url": b[12],
             }
         )
 
@@ -455,6 +458,7 @@ def map_book_select(
     title: str = Form(...),
     author: str = Form(...),
     slug: str = Form(None),
+    image_url: str = Form(None),
 ):
     """Handle Book Selection -> Show Editions."""
     book_obj = fetch_book(book_id)
@@ -478,6 +482,7 @@ def map_book_select(
             "title": title,
             "author": author,
             "slug": slug,
+            "book_image_url": image_url,
             "local_pages": book_obj["total_pages"] or 0,
             "editions": editions,
             "languages": sorted({e["language"] for e in editions}),
@@ -503,6 +508,7 @@ def map_book_confirm(
     author: str = Form(...),
     slug: str = Form(None),
     edition_id: Optional[int] = Form(None),
+    image_url: Optional[str] = Form(None),
 ):
     """Save the mapping."""
     if not fetch_book(book_id):
@@ -515,6 +521,8 @@ def map_book_confirm(
         title,
         author,
         slug,
+        # Only Hardcover's CDN; anything else is looked up again during sync.
+        image_url if image_url and image_url.startswith(HARDCOVER_ASSETS) else None,
     )
     request.session["message"] = "Book mapped successfully"
     request.session["message_type"] = "success"

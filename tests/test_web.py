@@ -172,3 +172,30 @@ def test_log_defaults_to_database_directory(tmp_path) -> None:
     )
 
     assert (tmp_path / "db" / "app.log").exists()
+
+
+def _confirm(c, image_url: str):
+    return c.post(
+        "/map/a/confirm",
+        auth=AUTH,
+        data={"hardcover_id": "1", "title": "T", "author": "A", "image_url": image_url},
+        follow_redirects=False,
+    )
+
+
+def test_confirm_stores_hardcover_cover(client) -> None:
+    c, web = client
+    _seed(web)
+
+    assert _confirm(c, "https://assets.hardcover.app/a.jpg").status_code == 303
+
+    assert "https://assets.hardcover.app/a.jpg" in c.get("/?q=dune", auth=AUTH).text
+
+
+def test_confirm_ignores_foreign_cover_url(client) -> None:
+    c, web = client
+    _seed(web)
+
+    _confirm(c, "https://evil.example/a.jpg")
+
+    assert web.engine.db.get_mappings_without_cover()[0][0] == "a"

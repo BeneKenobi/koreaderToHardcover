@@ -1,5 +1,31 @@
 {% extends "base.html" %}
 
+{% block head %}
+<style>
+    .title-cell { display: flex; gap: 1rem; align-items: center; }
+    .thumb {
+        flex: none;
+        width: 4rem;
+        height: 6rem;
+        border-radius: 0.3rem;
+        object-fit: cover;
+        background-color: var(--rp-overlay);
+    }
+    .thumb-placeholder {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--rp-subtle);
+        font-weight: bold;
+        font-size: 1.8rem;
+    }
+    @media (max-width: 640px) {
+        table.responsive td[data-label="Title"] { justify-content: flex-start; }
+        table.responsive td[data-label="Title"]::before { content: none; }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row">
     <div class="column">
@@ -59,11 +85,18 @@
             {% for book in books %}
             <tr>
                 <td data-label="Title">
-                    {% if book.hardcover_slug %}
-                        <a href="https://hardcover.app/books/{{ book.hardcover_slug }}" target="_blank" rel="noopener" style="color: var(--rp-text); text-decoration: underline;"><strong>{{ book.title }}</strong></a>
-                    {% else %}
-                        <strong>{{ book.title }}</strong>
-                    {% endif %}
+                    <div class="title-cell">
+                        {% if book.image_url %}
+                            <img class="thumb" src="{{ book.image_url }}" alt="" loading="lazy">
+                        {% else %}
+                            <div class="thumb thumb-placeholder" aria-hidden="true">{{ (book.title or '?')[:1] | upper }}</div>
+                        {% endif %}
+                        {% if book.hardcover_slug %}
+                            <a href="https://hardcover.app/books/{{ book.hardcover_slug }}" target="_blank" rel="noopener" style="color: var(--rp-text); text-decoration: underline;"><strong>{{ book.title }}</strong></a>
+                        {% else %}
+                            <strong>{{ book.title }}</strong>
+                        {% endif %}
+                    </div>
                 </td>
                 <td data-label="Author">{{ book.author or 'Unknown' }}</td>
                 <td data-label="Progress">

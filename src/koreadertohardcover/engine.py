@@ -187,10 +187,36 @@ class SyncEngine:
         except Exception as e:
             logger.error(f"Error during sync: {e}")
             return None
+        else:
+            self._backfill_covers(hc)
         finally:
             hc.close()
 
         return results
+
+    def _backfill_covers(self, hc: HardcoverClient) -> None:
+        """
+        Looks up cover URLs for mappings that have none yet, in one request.
+        Prefers the edition's cover and falls back to the book's.
+        """
+        try:
+            missing = self.db.get_mappings_without_cover()
+            if not missing:
+                return
+            book_ids = sorted({int(hc_id) for _, hc_id, _ in missing})
+            edition_ids = sorted({int(ed_id) for _, _, ed_id in missing if ed_id})
+            book_urls, edition_urls = hc.get_cover_urls(book_ids, edition_ids)
+
+            covers = {}
+            for local_id, hc_id, edition_id in missing:
+                url = edition_urls.get(int(edition_id)) if edition_id else None
+                # '' marks "no cover on Hardcover", so the book is not asked again.
+                covers[local_id] = url or book_urls.get(int(hc_id)) or ""
+            self.db.save_cover_urls(covers)
+            logger.info(f"Fetched cover URLs for {len(covers)} mapped books.")
+        except Exception as e:
+            # Covers are cosmetic; never fail the sync because of them.
+            logger.error(f"Failed to fetch cover URLs: {e}")
 
     def _sync_book(
         self, hc: HardcoverClient, conn: Any, book: Dict[str, Any], force: bool

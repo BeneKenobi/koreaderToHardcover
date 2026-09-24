@@ -141,6 +141,12 @@ class DatabaseManager:
                 "CREATE INDEX IF NOT EXISTS idx_reading_sessions_start_time ON reading_sessions(start_time)"
             )
 
+            # Cover URL on Hardcover's CDN. NULL means not fetched yet, '' means
+            # Hardcover has no cover. Added after the first release, hence ALTER.
+            conn.execute(
+                "ALTER TABLE book_mappings ADD COLUMN IF NOT EXISTS image_url VARCHAR"
+            )
+
     def check_health(self) -> Optional[str]:
         """Returns None if all tables are readable, otherwise an error description."""
         if self.init_error:
@@ -204,7 +210,8 @@ class DatabaseManager:
                     b.total_pages,
                     b.sync_status,
                     (SELECT MAX(page) FROM reading_sessions rs WHERE rs.book_id = b.id) AS max_page,
-                    b.status
+                    b.status,
+                    m.image_url
                 FROM books b
                 LEFT JOIN book_mappings m ON b.id = m.local_book_id
                 {where_clause}
@@ -358,20 +365,43 @@ class DatabaseManager:
         title: str = None,
         author: str = None,
         slug: str = None,
+        image_url: Optional[str] = None,
     ):
-        """Saves a mapping between a local book and Hardcover."""
+        """
+        Saves a mapping between a local book and Hardcover. Without an image_url the
+        cover is looked up during the next sync.
+        """
         with self.get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO book_mappings (local_book_id, hardcover_id, edition_id, book_title, author, hardcover_slug, mapping_method)
-                VALUES (?, ?, ?, ?, ?, ?, 'manual')
+                INSERT INTO book_mappings (local_book_id, hardcover_id, edition_id, book_title, author, hardcover_slug, image_url, mapping_method)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'manual')
                 ON CONFLICT (local_book_id) DO UPDATE SET
                     hardcover_id = excluded.hardcover_id,
                     edition_id = excluded.edition_id,
                     book_title = excluded.book_title,
                     author = excluded.author,
                     hardcover_slug = excluded.hardcover_slug,
+                    image_url = excluded.image_url,
                     updated_at = now()
             """,
-                [local_id, hardcover_id, edition_id, title, author, slug],
+                [local_id, hardcover_id, edition_id, title, author, slug, image_url],
+            )
+
+    def get_mappings_without_cover(self) -> list[tuple[str, str, Optional[str]]]:
+        """Returns (local_book_id, hardcover_id, edition_id) of mappings never checked for a cover."""
+        with self.get_connection() as conn:
+            return conn.execute(
+                "SELECT local_book_id, hardcover_id, edition_id FROM book_mappings "
+                "WHERE image_url IS NULL"
+            ).fetchall()
+
+    def save_cover_urls(self, covers: dict[str, str]) -> None:
+        """Stores cover URLs by local book ID ('' marks books without a cover)."""
+        if not covers:
+            return
+        with self.get_connection() as conn:
+            conn.executemany(
+                "UPDATE book_mappings SET image_url = ? WHERE local_book_id = ?",
+                [(url, local_id) for local_id, url in covers.items()],
             )
