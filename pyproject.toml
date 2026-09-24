@@ -1,6 +1,6 @@
 [project]
 name = "koreadertohardcover"
-version = "0.1.2"
+version = "0.2.0"
 description = "Sync KOReader reading progress to Hardcover.app"
 readme = "README.md"
 requires-python = ">=3.11"
