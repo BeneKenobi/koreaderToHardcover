@@ -17,3 +17,6 @@ htmlcov/
 .env
 *.duckdb*
 data/
+
+# Generated session key (web dashboard)
+secret_key

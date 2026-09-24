@@ -109,3 +109,24 @@ def test_failed_sync_is_retried_next_run(MockHC: MagicMock, engine: SyncEngine) 
     engine.sync_progress()
 
     assert hc.update_progress.call_count == 2
+
+
+@patch("koreadertohardcover.engine.HardcoverClient")
+def test_broken_book_does_not_stop_the_others(
+    MockHC: MagicMock, engine: SyncEngine
+) -> None:
+    with engine.db.get_connection() as conn:
+        conn.execute(
+            "INSERT INTO books (id, title, total_read_pages, total_pages, last_open) "
+            "VALUES ('md5_2', 'No Pages', NULL, NULL, '2024-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO book_mappings (local_book_id, hardcover_id) "
+            "VALUES ('md5_2', '1002')"
+        )
+    hc = MockHC.return_value
+    hc.update_progress.side_effect = [RuntimeError("boom"), True]
+
+    results = engine.sync_progress()
+
+    assert results == [("No Pages", False), ("Book One", True)]

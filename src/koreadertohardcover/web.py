@@ -13,15 +13,19 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse
 import os
 import logging
 from logging.handlers import RotatingFileHandler
 import datetime
 import secrets
+import threading
 
 import duckdb
 
-from koreadertohardcover.engine import SyncEngine
+from koreadertohardcover.engine import SyncEngine, progress_percentage
 from koreadertohardcover.config import Config
 from koreadertohardcover.hardcover_client import HardcoverClient
 
@@ -57,6 +61,9 @@ sync_status = {
     "last_run": None,
     "last_result": None,
 }
+
+# Held while a sync runs, so the scheduler and "Sync Now" never overlap.
+sync_lock = threading.Lock()
 
 # Scheduler
 scheduler = BackgroundScheduler()
@@ -130,10 +137,49 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 
+def load_secret_key() -> str:
+    """
+    Returns SECRET_KEY from the environment. Without one, a key is generated once and
+    stored next to the database, so sessions survive restarts.
+    """
+    env_key = os.getenv("SECRET_KEY")
+    if env_key:
+        return env_key
+
+    key_path = Path(db_path).resolve().parent / "secret_key"
+    try:
+        if key_path.exists():
+            return key_path.read_text().strip()
+        key = secrets.token_hex(32)
+        key_path.touch(mode=0o600)
+        key_path.write_text(key)
+        return key
+    except OSError as e:
+        logger.error(f"Could not persist secret key at {key_path}: {e}")
+        return secrets.token_hex(32)
+
+
 app = FastAPI(lifespan=lifespan, dependencies=[Depends(get_current_username)])
-app.add_middleware(
-    SessionMiddleware, secret_key=os.getenv("SECRET_KEY", secrets.token_hex(32))
-)
+app.add_middleware(SessionMiddleware, secret_key=load_secret_key())
+
+
+@app.middleware("http")
+async def reject_cross_site_posts(request: Request, call_next):
+    """
+    Browsers send Basic Auth credentials with cross-site form posts, so a foreign
+    page could trigger syncs or remap books. Reject POSTs whose Origin (or Referer)
+    names a different host. Requests without either header are non-browser clients.
+    """
+    if request.method == "POST":
+        source = request.headers.get("origin") or request.headers.get("referer")
+        if source:
+            expected_host = request.headers.get(
+                "x-forwarded-host", request.headers.get("host")
+            )
+            if urlparse(source).netloc != expected_host:
+                logger.warning(f"Rejected cross-site POST to {request.url.path}")
+                return HTMLResponse("Cross-site request rejected", status_code=403)
+    return await call_next(request)
 
 
 @app.exception_handler(duckdb.Error)
@@ -151,33 +197,62 @@ async def database_error_handler(request: Request, exc: duckdb.Error):
 # --- Helpers ---
 
 
+def summarize_sync(
+    ingest_ok: Optional[bool], results: Optional[list[tuple[str, bool]]]
+) -> str:
+    """Builds the dashboard result text. Anything that failed starts with 'Error'."""
+    errors = []
+    if ingest_ok is False:
+        errors.append("WebDAV ingestion failed")
+    if results is None:
+        errors.append("Hardcover sync failed")
+    else:
+        failed = [title for title, ok in results if not ok]
+        if failed:
+            errors.append(f"{len(failed)} of {len(results)} books failed to sync")
+    if errors:
+        return "Error: " + "; ".join(errors) + " (see logs)"
+    return f"Success ({len(results or [])} books checked)"
+
+
 def scheduled_sync():
     """Background task to ingest and sync."""
-    global sync_status
-    sync_status["state"] = "running"
+    if not sync_lock.acquire(blocking=False):
+        logger.info("Sync already running, skipping this run.")
+        return
 
+    sync_status["state"] = "running"
     logger.info("Running scheduled sync...")
     try:
-        if config.WEBDAV_URL:
-            engine.ingest_from_webdav()
-
-        engine.sync_progress(limit=20)
-        sync_status["last_result"] = "Success"
+        ingest_ok = engine.ingest_from_webdav() if config.WEBDAV_URL else None
+        results = engine.sync_progress(limit=20)
+        sync_status["last_result"] = summarize_sync(ingest_ok, results)
     except Exception as e:
         logger.error(f"Sync failed: {e}")
         sync_status["last_result"] = f"Error: {str(e)}"
     finally:
         sync_status["state"] = "idle"
         sync_status["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sync_lock.release()
 
-    logger.info("Scheduled sync complete.")
+    logger.info(f"Scheduled sync complete: {sync_status['last_result']}")
+
+
+def fetch_book(book_id: str) -> Optional[dict]:
+    with engine.db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
+        ).fetchone()
+    if not row:
+        return None
+    return {"id": book_id, "title": row[0], "author": row[1], "total_pages": row[2]}
 
 
 # --- Routes ---
 
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, page: int = 1):
+def dashboard(request: Request, page: int = 1):
     """Main Dashboard."""
     message = request.session.pop("message", None)
     message_type = request.session.pop("message_type", None)
@@ -185,6 +260,7 @@ async def dashboard(request: Request, page: int = 1):
     # Fetch Hardcover Username (Cache in session)
     username = request.session.get("hardcover_username")
     if not username and config.HARDCOVER_BEARER_TOKEN:
+        hc = None
         try:
             hc = HardcoverClient(config)
             me = hc.get_me()
@@ -193,63 +269,37 @@ async def dashboard(request: Request, page: int = 1):
                 request.session["hardcover_username"] = username
         except Exception as e:
             logger.error(f"Failed to fetch user info: {e}")
+        finally:
+            if hc:
+                hc.close()
 
+    page = max(page, 1)
     limit = 10
     offset = (page - 1) * limit
 
     books, total_count = engine.db.get_local_books(limit=limit, offset=offset)
 
-    # Prepare book objects for template
-    book_list = []
-    for b in books:
-        # b = (id, title, authors, last_open, is_mapped, hardcover_slug, hardcover_id)
-        book_list.append(
-            {
-                "id": b[0],
-                "title": b[1],
-                "author": b[2],
-                # We need to fetch read pages / total pages for the progress bar
-                # This requires a separate query or updating get_local_books to return more data
-                # For now, let's just do a quick fetch or update the DB query later.
-                # To keep it simple, I'll update get_local_books in database.py to return full objects
-                # Or just fetch detail here.
-                "last_read": b[3],
-                "is_mapped": bool(b[4]),
-                "hardcover_slug": b[5],
-                "hardcover_id": b[6],
-                # Hack: We need read/total pages.
-                # Let's just fetch it individually for now or update the main query.
-                # Updating the main query is better but let's stick to existing for a sec.
-            }
-        )
-
-    # Re-fetch with details for display (Efficiency improvement needed later)
-    # Actually, let's just update the query in database.py to return what we need.
-    # But I can't modify database.py right now in this step easily without context.
-    # So I will fetch details manually.
-
-    detailed_books = []
-    with engine.db.get_connection() as conn:
-        for b in book_list:
-            row = conn.execute(
-                "SELECT total_read_pages, total_pages, sync_status FROM books WHERE id = ?",
-                [b["id"]],
-            ).fetchone()
-            if row:
-                b["read_pages"] = row[0]
-                b["total_pages"] = row[1]
-                b["sync_status"] = row[2]
-            else:
-                b["read_pages"] = 0
-                b["total_pages"] = 0
-                b["sync_status"] = "unknown"
-            detailed_books.append(b)
+    book_list = [
+        {
+            "id": b[0],
+            "title": b[1],
+            "author": b[2],
+            "last_read": b[3],
+            "is_mapped": bool(b[4]),
+            "hardcover_slug": b[5],
+            "hardcover_id": b[6],
+            # Same number the sync sends to Hardcover.
+            "progress": progress_percentage(b[7], b[10], b[8]),
+            "sync_status": b[9],
+        }
+        for b in books
+    ]
 
     return templates.TemplateResponse(
         request,
         "dashboard.html",
         {
-            "books": detailed_books,
+            "books": book_list,
             "page": page,
             "limit": limit,
             "total_count": total_count,
@@ -264,14 +314,18 @@ async def dashboard(request: Request, page: int = 1):
 @app.post("/sync")
 async def trigger_sync(request: Request, background_tasks: BackgroundTasks):
     """Manual Sync Trigger."""
-    background_tasks.add_task(scheduled_sync)
-    request.session["message"] = "Sync started in background"
-    request.session["message_type"] = "success"
+    if sync_lock.locked():
+        request.session["message"] = "A sync is already running"
+        request.session["message_type"] = "error"
+    else:
+        background_tasks.add_task(scheduled_sync)
+        request.session["message"] = "Sync started in background"
+        request.session["message_type"] = "success"
     return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/logs", response_class=HTMLResponse)
-async def view_logs(request: Request):
+def view_logs(request: Request):
     """View application logs."""
     if os.path.exists(log_path):
         with open(log_path, "r") as f:
@@ -286,24 +340,13 @@ async def view_logs(request: Request):
 
 
 @app.get("/map/{book_id}", response_class=HTMLResponse)
-async def map_book_ui(request: Request, book_id: str):
+def map_book_ui(request: Request, book_id: str):
     """Mapping Interface - Search."""
-    with engine.db.get_connection() as conn:
-        book_row = conn.execute(
-            "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
-        ).fetchone()
-
-    if not book_row:
+    book_obj = fetch_book(book_id)
+    if not book_obj:
         request.session["message"] = "Book not found"
         request.session["message_type"] = "error"
         return RedirectResponse(url="/", status_code=303)
-
-    book_obj = {
-        "id": book_id,
-        "title": book_row[0],
-        "author": book_row[1],
-        "total_pages": book_row[2],
-    }
 
     return templates.TemplateResponse(
         request, "mapping.html", {"book": book_obj, "query": None}
@@ -311,29 +354,17 @@ async def map_book_ui(request: Request, book_id: str):
 
 
 @app.post("/map/{book_id}/search", response_class=HTMLResponse)
-async def map_book_search(request: Request, book_id: str, query: str = Form(...)):
+def map_book_search(request: Request, book_id: str, query: str = Form(...)):
     """Handle Search."""
-    with engine.db.get_connection() as conn:
-        book_row = conn.execute(
-            "SELECT title, authors, total_pages FROM books WHERE id = ?", [book_id]
-        ).fetchone()
-
-    if not book_row:
-        # Handle case where book disappeared or ID is invalid (though less likely in this flow)
+    book_obj = fetch_book(book_id)
+    if not book_obj:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    book_obj = {
-        "id": book_id,
-        "title": book_row[0],
-        "author": book_row[1],
-        "total_pages": book_row[2],
-    }
-
     hc = HardcoverClient(config)
-
-    # 1. Search Shelf (if query matches title roughly) - Optional optimization
-    # 2. Global Search
-    results = hc.search_books(query)
+    try:
+        results = hc.search_books(query)
+    finally:
+        hc.close()
 
     return templates.TemplateResponse(
         request,
@@ -347,24 +378,24 @@ async def map_book_search(request: Request, book_id: str, query: str = Form(...)
 
 
 @app.post("/map/{book_id}/select", response_class=HTMLResponse)
-async def map_book_select(
+def map_book_select(
     request: Request,
     book_id: str,
-    hardcover_id: str = Form(...),
+    hardcover_id: int = Form(...),
     title: str = Form(...),
     author: str = Form(...),
     slug: str = Form(None),
 ):
     """Handle Book Selection -> Show Editions."""
+    book_obj = fetch_book(book_id)
+    if not book_obj:
+        raise HTTPException(status_code=404, detail="Book not found")
+
     hc = HardcoverClient(config)
-
-    with engine.db.get_connection() as conn:
-        local_book_row = conn.execute(
-            "SELECT total_pages FROM books WHERE id = ?", [book_id]
-        ).fetchone()
-        local_pages = local_book_row[0] if local_book_row else 0
-
-    editions = hc.get_editions(int(hardcover_id))
+    try:
+        editions = hc.get_editions(hardcover_id)
+    finally:
+        hc.close()
 
     return templates.TemplateResponse(
         request,
@@ -375,24 +406,34 @@ async def map_book_select(
             "title": title,
             "author": author,
             "slug": slug,
-            "local_pages": local_pages,
+            "local_pages": book_obj["total_pages"] or 0,
             "editions": editions,
         },
     )
 
 
 @app.post("/map/{book_id}/confirm")
-async def map_book_confirm(
+def map_book_confirm(
     request: Request,
     book_id: str,
-    hardcover_id: str = Form(...),
+    hardcover_id: int = Form(...),
     title: str = Form(...),
     author: str = Form(...),
     slug: str = Form(None),
-    edition_id: str = Form(None),
+    edition_id: Optional[int] = Form(None),
 ):
     """Save the mapping."""
-    engine.db.save_book_mapping(book_id, hardcover_id, edition_id, title, author, slug)
+    if not fetch_book(book_id):
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    engine.db.save_book_mapping(
+        book_id,
+        str(hardcover_id),
+        str(edition_id) if edition_id is not None else None,
+        title,
+        author,
+        slug,
+    )
     request.session["message"] = "Book mapped successfully"
     request.session["message_type"] = "success"
     return RedirectResponse(url="/", status_code=303)

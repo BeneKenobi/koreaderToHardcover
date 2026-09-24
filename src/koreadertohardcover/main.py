@@ -34,11 +34,6 @@ def map_book(query, db_path):
     Otherwise, opens an interactive browser of local books.
     """
     db = DatabaseManager(db_path)
-    # try:
-    #     db.connect()
-    # except Exception as e:
-    #     click.echo(click.style(f"Error connecting to database: {e}", fg="red"))
-    #     return
 
     config = Config()
     hc = HardcoverClient(config)
@@ -165,6 +160,8 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
     if not ingest_only:
         click.echo(f"\nSyncing {past} most recent books to Hardcover...")
         results = engine.sync_progress(limit=past, force=force)
+        if results is None:
+            raise click.ClickException("Hardcover sync failed. Check logs.")
 
         for title, status in results:
             if status:
@@ -173,8 +170,7 @@ def sync(sqlite_path, db_path, ingest_only, reset_db, past, force):
                 click.echo(click.style(f'  Failed to sync "{title}".', fg="red"))
 
     # 3. Summary
-    db = DatabaseManager(db_path)
-    with db.get_connection() as conn:
+    with engine.db.get_connection() as conn:
         books_count_row = conn.execute("SELECT count(*) FROM books").fetchone()
         books_count = books_count_row[0] if books_count_row else 0
 

@@ -2,14 +2,29 @@ import os
 import tempfile
 import logging
 import math
-from typing import Any, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from koreadertohardcover.database import DatabaseManager
 from koreadertohardcover.config import Config
 from koreadertohardcover.webdav_client import fetch_koreader_db
 from koreadertohardcover.hardcover_client import HardcoverClient
 
-# Configure logging
 logger = logging.getLogger(__name__)
+
+
+def progress_percentage(
+    read_pages: Optional[int], max_page: Optional[int], total_pages: Optional[int]
+) -> int:
+    """
+    Reading progress as a ceiled integer percentage.
+    Uses the furthest page reached if it is ahead of the read-page count, which
+    matches KOReader's UI (99% position vs 97% count).
+    """
+    read_pages = read_pages or 0
+    total_pages = total_pages or 0
+    if total_pages <= 0:
+        return 0
+    current = max_page if max_page and max_page > read_pages else read_pages
+    return math.ceil(current / total_pages * 100)
 
 
 def _date_key(value: Any) -> str:
@@ -74,7 +89,6 @@ class SyncEngine:
             fetch_koreader_db(self.config, tmp_path)
 
             logger.info("Ingesting data from fetched SQLite DB...")
-            # self.db.connect()  <- Removed
             self.db.import_books(tmp_path)
             self.db.import_sessions(tmp_path)
             self.db.checkpoint()
@@ -100,7 +114,6 @@ class SyncEngine:
 
         try:
             logger.info(f"Ingesting data from local file: {sqlite_path}...")
-            # self.db.connect() <- Removed
             self.db.import_books(sqlite_path)
             self.db.import_sessions(sqlite_path)
             self.db.checkpoint()
@@ -112,10 +125,11 @@ class SyncEngine:
 
     def sync_progress(
         self, limit: int = 10, force: bool = False
-    ) -> List[Tuple[str, bool]]:
+    ) -> Optional[List[Tuple[str, bool]]]:
         """
         Syncs the reading progress of recently read, mapped books to Hardcover.
-        Returns a list of (book_title, success_boolean) tuples.
+        Returns a list of (book_title, success_boolean) tuples, or None if the
+        sync could not run at all.
         """
         if not self.config.HARDCOVER_BEARER_TOKEN:
             logger.warning("HARDCOVER_BEARER_TOKEN not set. Skipping Hardcover sync.")
@@ -125,9 +139,6 @@ class SyncEngine:
         hc = HardcoverClient(self.config)
 
         try:
-            # self.db.connect() <- Removed
-            # conn = self.db.get_connection() <- Changed to context manager
-
             with self.db.get_connection() as conn:
                 # Fetch recent books that are mapped
                 # We select books, verify they have a mapping, and then sync
@@ -146,95 +157,98 @@ class SyncEngine:
                     LIMIT ?
                 """
 
-                recent_books = conn.execute(sql, [limit]).fetchall()
+                cursor = conn.execute(sql, [limit])
+                columns = [col[0] for col in cursor.description]
+                recent_books = [dict(zip(columns, row)) for row in cursor.fetchall()]
                 logger.info(
                     f"Found {len(recent_books)} mapped books to check for sync."
                 )
 
-                for (
-                    b_id,
-                    title,
-                    authors,
-                    read_pg,
-                    total_pg,
-                    status,
-                    read_time,
-                    last_open,
-                    hc_id,
-                    edition_id,
-                    stored_fingerprint,
-                    start_date,
-                    last_session_date,
-                    max_page,
-                ) in recent_books:
-                    # Use max_page (furthest position) if available, otherwise fall back to read_pg (count)
-                    # This matches KOReader's UI behavior (99% position vs 97% count)
-                    current_progress = (
-                        max_page if max_page and max_page > read_pg else read_pg
-                    )
-                    percentage = math.ceil(
-                        (current_progress / total_pg * 100) if total_pg > 0 else 0
-                    )
-
-                    if percentage >= 98:
-                        status = "finished"
-
-                    # Use last_session_date if available, otherwise fallback to last_open
-                    # This ensures we use the actual reading time instead of just file open time
-                    effective_last_read = (
-                        last_session_date if last_session_date else last_open
-                    )
-
-                    fingerprint = _fingerprint(
-                        hc_id,
-                        edition_id,
-                        percentage,
-                        status,
-                        read_time,
-                        start_date,
-                        effective_last_read,
-                    )
-
-                    # Nothing changed since the last successful sync, so Hardcover
-                    # already holds this state. Asking it again costs two API calls.
-                    if not force and stored_fingerprint == fingerprint:
-                        logger.info(
-                            f"Skipping '{title}' (ID: {hc_id}) - unchanged since last sync."
+                for book in recent_books:
+                    title = book["title"]
+                    try:
+                        success = self._sync_book(hc, conn, book, force)
+                    except Exception as e:
+                        # One broken book must not stop the others from syncing.
+                        logger.error(
+                            f"Failed to sync '{title}' (ID: {book['hardcover_id']}): {e}"
                         )
-                        results.append((title, True))
-                        continue
-
-                    logger.info(
-                        f"Syncing '{title}' (ID: {hc_id}) - Status: {status} - {percentage}%"
-                    )
-
-                    success = hc.update_progress(
-                        hc_id,
-                        percentage,
-                        status,
-                        seconds=read_time,
-                        last_read_date=effective_last_read,
-                        start_date=start_date,
-                        force=force,
-                        edition_id=edition_id,
-                    )
-
-                    if success:
-                        conn.execute(
-                            "UPDATE books SET sync_status = 'synced', updated_at = now() "
-                            "WHERE id = ? AND sync_status IS DISTINCT FROM 'synced'",
-                            [b_id],
-                        )
-                        conn.execute(
-                            "INSERT INTO sync_state (local_book_id, fingerprint, synced_at) "
-                            "VALUES (?, ?, now()) ON CONFLICT (local_book_id) DO UPDATE "
-                            "SET fingerprint = excluded.fingerprint, synced_at = excluded.synced_at",
-                            [b_id, fingerprint],
-                        )
+                        success = False
 
                     results.append((title, success))
 
         except Exception as e:
             logger.error(f"Error during sync: {e}")
+            return None
+        finally:
+            hc.close()
 
         return results
+
+    def _sync_book(
+        self, hc: HardcoverClient, conn: Any, book: Dict[str, Any], force: bool
+    ) -> bool:
+        """Syncs one book. Returns True if Hardcover holds the local state."""
+        b_id = book["id"]
+        title = book["title"]
+        hc_id = book["hardcover_id"]
+        edition_id = book["edition_id"]
+        start_date = book["start_date"]
+        percentage = progress_percentage(
+            book["total_read_pages"], book["max_page"], book["total_pages"]
+        )
+        status = book["status"] or "reading"
+        if percentage >= 98:
+            status = "finished"
+        read_time = book["total_read_time"] or 0
+
+        # Use last_session_date if available, otherwise fallback to last_open
+        # This ensures we use the actual reading time instead of just file open time
+        effective_last_read = book["last_session_date"] or book["last_open"]
+
+        fingerprint = _fingerprint(
+            hc_id,
+            edition_id,
+            percentage,
+            status,
+            read_time,
+            start_date,
+            effective_last_read,
+        )
+
+        # Nothing changed since the last successful sync, so Hardcover
+        # already holds this state. Asking it again costs two API calls.
+        if not force and book["fingerprint"] == fingerprint:
+            logger.info(
+                f"Skipping '{title}' (ID: {hc_id}) - unchanged since last sync."
+            )
+            return True
+
+        logger.info(
+            f"Syncing '{title}' (ID: {hc_id}) - Status: {status} - {percentage}%"
+        )
+
+        success = hc.update_progress(
+            hc_id,
+            percentage,
+            status,
+            seconds=read_time,
+            last_read_date=effective_last_read,
+            start_date=start_date,
+            force=force,
+            edition_id=edition_id,
+        )
+
+        if success:
+            conn.execute(
+                "UPDATE books SET sync_status = 'synced', updated_at = now() "
+                "WHERE id = ? AND sync_status IS DISTINCT FROM 'synced'",
+                [b_id],
+            )
+            conn.execute(
+                "INSERT INTO sync_state (local_book_id, fingerprint, synced_at) "
+                "VALUES (?, ?, now()) ON CONFLICT (local_book_id) DO UPDATE "
+                "SET fingerprint = excluded.fingerprint, synced_at = excluded.synced_at",
+                [b_id, fingerprint],
+            )
+        return success

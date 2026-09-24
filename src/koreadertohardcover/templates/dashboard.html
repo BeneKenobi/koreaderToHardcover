@@ -53,13 +53,7 @@
                     {% endif %}
                 </td>
                 <td>{{ book.author }}</td>
-                <td>
-                    {% if book.total_pages > 0 %}
-                        {{ (book.read_pages / book.total_pages * 100) | round(1) }}%
-                    {% else %}
-                        0%
-                    {% endif %}
-                </td>
+                <td>{{ book.progress }}%</td>
                 <td>{{ book.last_read }}</td>
                 <td>
                     {% if book.is_mapped %}

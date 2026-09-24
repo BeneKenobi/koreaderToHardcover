@@ -7,6 +7,32 @@ logger = logging.getLogger(__name__)
 
 TABLES = ("books", "reading_sessions", "book_mappings", "sync_state")
 
+# A book counts as finished once almost every page was read. Up to 15 unread pages
+# are tolerated for back matter, but only when at least 90% was read, so short or
+# skimmed books are not marked finished right after opening them.
+FINISHED_CASE_SQL = """
+    CASE
+        WHEN pages > 0 AND (
+            CAST(total_read_pages AS DOUBLE) / pages >= 0.98 OR (
+                pages - total_read_pages <= 15
+                AND CAST(total_read_pages AS DOUBLE) / pages >= 0.9
+            )
+        ) THEN 'finished'
+        ELSE 'reading'
+    END
+"""
+
+# KOReader keys its book table on (title, authors, md5), so one file can have
+# several rows, e.g. after a metadata edit. Keep the most recently opened one.
+KOREADER_BOOKS_SQL = f"""
+    SELECT *, {FINISHED_CASE_SQL} AS new_status
+    FROM koreader.book
+    WHERE md5 IS NOT NULL AND md5 != ''
+    QUALIFY row_number() OVER (
+        PARTITION BY md5 ORDER BY last_open DESC NULLS LAST, id DESC
+    ) = 1
+"""
+
 
 class DatabaseManager:
     def __init__(self, db_path: str = "reading_stats.duckdb"):
@@ -165,7 +191,11 @@ class DatabaseManager:
                     b.last_open,
                     CASE WHEN m.local_book_id IS NOT NULL THEN 1 ELSE 0 END as is_mapped,
                     m.hardcover_slug,
-                    m.hardcover_id
+                    m.hardcover_id,
+                    b.total_read_pages,
+                    b.total_pages,
+                    b.sync_status,
+                    (SELECT MAX(page) FROM reading_sessions rs WHERE rs.book_id = b.id) AS max_page
                 FROM books b
                 LEFT JOIN book_mappings m ON b.id = m.local_book_id
                 {where_clause}
@@ -173,7 +203,7 @@ class DatabaseManager:
                 LIMIT ? OFFSET ?
             """
 
-            books = conn.execute(sql, params + [limit, offset]).fetchall()
+            books = conn.execute(sql, params + [limit, max(offset, 0)]).fetchall()
             return books, total
 
     def import_books(self, sqlite_path: str):
@@ -183,7 +213,7 @@ class DatabaseManager:
             try:
                 # 1. Update existing books, but only rows whose values actually changed.
                 # Rewriting unchanged rows every sync bloats the file (see create_schema).
-                conn.execute("""
+                conn.execute(f"""
                     UPDATE books
                     SET
                         koreader_id = k.id,
@@ -199,20 +229,8 @@ class DatabaseManager:
                         last_open = to_timestamp(k.last_open),
                         status = k.new_status,
                         updated_at = now()
-                    FROM (
-                        SELECT
-                            *,
-                            CASE
-                                WHEN pages > 0 AND (
-                                    (CAST(total_read_pages AS FLOAT) / CAST(pages AS FLOAT)) >= 0.98 OR
-                                    (pages - total_read_pages) <= 15
-                                ) THEN 'finished'
-                                ELSE 'reading'
-                            END AS new_status
-                        FROM koreader.book
-                    ) k
+                    FROM ({KOREADER_BOOKS_SQL}) k
                     WHERE books.id = k.md5
-                    AND k.md5 IS NOT NULL AND k.md5 != ''
                     AND (
                         books.koreader_id IS DISTINCT FROM k.id OR
                         books.title IS DISTINCT FROM k.title OR
@@ -230,7 +248,7 @@ class DatabaseManager:
                 """)
 
                 # 2. Insert new books
-                conn.execute("""
+                conn.execute(f"""
                     INSERT INTO books (
                         id, koreader_id, title, authors, series, language, 
                         total_pages, total_read_pages, total_read_time, highlights, notes,
@@ -249,19 +267,12 @@ class DatabaseManager:
                         k.highlights,
                         k.notes,
                         to_timestamp(k.last_open),
-                        CASE 
-                            WHEN k.pages > 0 AND (
-                                (CAST(k.total_read_pages AS FLOAT) / CAST(k.pages AS FLOAT)) >= 0.98 OR
-                                (k.pages - k.total_read_pages) <= 15
-                            ) THEN 'finished'
-                            ELSE 'reading'
-                        END,
+                        k.new_status,
                         'pending',
                         now(),
                         now()
-                    FROM koreader.book k
-                    WHERE k.md5 IS NOT NULL AND k.md5 != ''
-                    AND NOT EXISTS (SELECT 1 FROM books b WHERE b.id = k.md5)
+                    FROM ({KOREADER_BOOKS_SQL}) k
+                    WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.id = k.md5)
                 """)
             finally:
                 self._detach_koreader(conn)
@@ -293,6 +304,10 @@ class DatabaseManager:
                         WHERE rs.book_id = b.md5 
                         AND rs.start_time = to_timestamp(psd.start_time)
                     )
+                    -- Duplicate book rows for one md5 can carry the same session.
+                    QUALIFY row_number() OVER (
+                        PARTITION BY b.md5, psd.start_time ORDER BY psd.page DESC
+                    ) = 1
                 """)
             finally:
                 self._detach_koreader(conn)
@@ -304,7 +319,8 @@ class DatabaseManager:
         except Exception:
             pass
         try:
-            conn.execute(f"ATTACH '{sqlite_path}' AS koreader (TYPE SQLITE)")
+            escaped_path = sqlite_path.replace("'", "''")
+            conn.execute(f"ATTACH '{escaped_path}' AS koreader (TYPE SQLITE)")
         except Exception as e:
             raise RuntimeError(
                 f"Failed to attach SQLite database at {sqlite_path}: {e}"

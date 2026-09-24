@@ -76,9 +76,19 @@ Set the following variables in your `.env` file:
 | Variable | Description | Required | Default |
 |----------|-------------|:--------:|:-------:|
 | `HARDCOVER_BEARER_TOKEN` | Your API token from Hardcover.app | **Yes** | - |
-| `WEBDAV_URL` | Full URL to your `statistics.sqlite3` file | **Yes** | - |
+| `WEBDAV_URL` | Base WebDAV URL, e.g. `https://cloud.example.com/remote.php/dav/files/user/` | **Yes** | - |
 | `WEBDAV_USERNAME` | WebDAV username | **Yes** | - |
 | `WEBDAV_PASSWORD` | WebDAV password | **Yes** | - |
+| `WEBDAV_PATH` | Folder containing the database, relative to `WEBDAV_URL` | No | - |
+| `KOREADER_DB_PATH` | Database file name inside `WEBDAV_PATH` | No | `statistics.sqlite3` |
 | `SYNC_INTERVAL_MINUTES` | Frequency of automated syncs (Docker only) | No | `60` |
 | `APP_USERNAME` | Dashboard Login Username | No | `admin` |
 | `APP_PASSWORD` | Dashboard Login Password | No | `admin` |
+| `SECRET_KEY` | Session cookie key; generated and stored next to the database if unset | No | - |
+
+## Sync Behavior
+
+- A book counts as **finished** once at least 98% is read, or when at most 15 pages are left and at least 90% is read (unread back matter).
+- Books already marked *Finished* on Hardcover are not changed again unless you run `sync --force`.
+- The last state sent to Hardcover is stored locally. Books with unchanged local progress are skipped without an API call, so changes made directly on Hardcover (for example removing a book from your shelf) are not noticed until local progress changes. Use `sync --force` to push the current state again.
+- The Docker image runs the app as UID/GID 1000 (override with `APP_UID`/`APP_GID`) and takes ownership of `/data` on start.

@@ -9,11 +9,15 @@ services:
       - WEBDAV_PASSWORD=${WEBDAV_PASSWORD}
       - WEBDAV_PATH=${WEBDAV_PATH}
       - HARDCOVER_BEARER_TOKEN=${HARDCOVER_BEARER_TOKEN}
-      - SYNC_INTERVAL_MINUTES=60
+      - KOREADER_DB_PATH=${KOREADER_DB_PATH:-statistics.sqlite3}
+      - SYNC_INTERVAL_MINUTES=${SYNC_INTERVAL_MINUTES:-60}
+      - SECRET_KEY=${SECRET_KEY:-}
       - DB_PATH=/data/reading_stats.duckdb
       - LOG_PATH=/data/app.log
       - APP_USERNAME=${APP_USERNAME:-admin}
       - APP_PASSWORD=${APP_PASSWORD:-admin}
+      - APP_UID=${APP_UID:-1000}
+      - APP_GID=${APP_GID:-1000}
     volumes:
       - ./data:/data
     restart: unless-stopped

@@ -1,14 +1,26 @@
-import httpx
 import logging
 import math
-from typing import List, Dict, Any, Optional
+import time
+from importlib.metadata import PackageNotFoundError, version
+from typing import Any, Dict, List, Optional
+
+import httpx
+
 from koreadertohardcover.config import Config
 
 logger = logging.getLogger(__name__)
 
+try:
+    USER_AGENT = f"koreadertohardcover/{version('koreadertohardcover')}"
+except PackageNotFoundError:
+    USER_AGENT = "koreadertohardcover"
+
 
 class HardcoverClient:
     API_URL = "https://api.hardcover.app/v1/graphql"
+    MAX_RETRIES = 3
+    # Used when a 429 response has no usable Retry-After header.
+    DEFAULT_RETRY_SECONDS = 10.0
 
     def __init__(self, config: Config):
         self.config = config
@@ -18,28 +30,50 @@ class HardcoverClient:
         self.headers = {
             "Authorization": config.HARDCOVER_BEARER_TOKEN,
             "Content-Type": "application/json",
-            "User-Agent": "curl/7.64.1",
+            "User-Agent": USER_AGENT,
         }
+        # One client per HardcoverClient, so consecutive queries reuse the connection.
+        self._http = httpx.Client(timeout=30.0, headers=self.headers)
+
+    def close(self) -> None:
+        self._http.close()
+
+    def _retry_delay(self, response: httpx.Response, attempt: int) -> float:
+        retry_after = response.headers.get("Retry-After")
+        try:
+            return max(float(retry_after), 1.0)
+        except (TypeError, ValueError):
+            return self.DEFAULT_RETRY_SECONDS * (attempt + 1)
 
     def _execute_query(
         self, query: str, variables: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
-        with httpx.Client(timeout=30.0) as client:
-            try:
-                response = client.post(
-                    self.API_URL,
-                    json={"query": query, "variables": variables or {}},
-                    headers=self.headers,
+        payload = {"query": query, "variables": variables or {}}
+        for attempt in range(self.MAX_RETRIES + 1):
+            response = self._http.post(self.API_URL, json=payload)
+            if (
+                response.status_code == httpx.codes.TOO_MANY_REQUESTS
+                and attempt < self.MAX_RETRIES
+            ):
+                delay = self._retry_delay(response, attempt)
+                logger.warning(
+                    f"Hardcover rate limit hit, retrying in {delay:.0f}s "
+                    f"(attempt {attempt + 1}/{self.MAX_RETRIES})"
                 )
+                time.sleep(delay)
+                continue
+            try:
                 response.raise_for_status()
-                data = response.json()
-                if "errors" in data:
-                    raise RuntimeError(f"GraphQL Error: {data['errors']}")
-                return data["data"]
             except httpx.HTTPStatusError as e:
-                print(f"HTTP Error: {e.response.status_code}")
-                print(f"Response: {e.response.text}")
-                raise e
+                logger.error(
+                    f"Hardcover HTTP error {e.response.status_code}: {e.response.text}"
+                )
+                raise
+            data = response.json()
+            if "errors" in data:
+                raise RuntimeError(f"GraphQL Error: {data['errors']}")
+            return data["data"]
+        raise RuntimeError("Hardcover rate limit retries exhausted")
 
     def get_me(self) -> Dict[str, Any]:
         """Fetches the authenticated user's information."""
@@ -192,7 +226,7 @@ class HardcoverClient:
             return results
 
         # 2. Fallback: Fetch all books and search locally
-        print(f"  Exact match failed. Fetching shelf to search for '{title}'...")
+        logger.info(f"Exact match failed. Fetching shelf to search for '{title}'...")
         # Note: Limit 50 most recently updated books to find current reads
         gql_all = """
         query GetAllUserBooks {
@@ -414,7 +448,7 @@ class HardcoverClient:
                 }
                 """
                 new_ub_res = self._execute_query(fetch_new_ub, {"id": ub_id})
-                new_ub_reads = new_ub_res.get("user_books_by_pk", {}).get(
+                new_ub_reads = (new_ub_res.get("user_books_by_pk") or {}).get(
                     "user_book_reads", []
                 )
                 ubr_id = new_ub_reads[0]["id"] if new_ub_reads else None
@@ -504,5 +538,5 @@ class HardcoverClient:
 
             return True
         except Exception as e:
-            print(f"Error updating progress: {e}")
+            logger.error(f"Error updating progress for book {book_id}: {e}")
             return False

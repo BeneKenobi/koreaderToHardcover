@@ -23,11 +23,11 @@ class InteractiveMapper:
                 return existing
 
         # Get local book details for comparison
-        conn = self.db.get_connection()
-        local_book = conn.execute(
-            "SELECT total_pages FROM books WHERE id = ?", [local_id]
-        ).fetchone()
-        local_pages = local_book[0] if local_book else 0
+        with self.db.get_connection() as conn:
+            local_book = conn.execute(
+                "SELECT total_pages FROM books WHERE id = ?", [local_id]
+            ).fetchone()
+        local_pages = (local_book[0] if local_book else None) or 0
 
         click.echo(
             click.style(
@@ -94,7 +94,7 @@ class InteractiveMapper:
 
         if choice_str.lower() == "s":
             new_title = click.prompt("Enter new title to search")
-            return self.map_book(local_id, new_title, author)
+            return self.map_book(local_id, new_title, author, force=force)
 
         try:
             choice = int(choice_str)

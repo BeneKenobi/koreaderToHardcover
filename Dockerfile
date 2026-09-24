@@ -1,5 +1,5 @@
 # Use a Python image with uv pre-installed
-FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
 # Install the project into `/app`
 WORKDIR /app
@@ -24,8 +24,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Reset the entrypoint, don't invoke `uv`
-ENTRYPOINT []
+# Fix /data ownership, then run the app as an unprivileged user
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
+
+# Any HTTP answer (401 without credentials) means the server is up
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+    CMD ["python", "-c", "import http.client, sys; c = http.client.HTTPConnection('127.0.0.1', 8000, timeout=5); c.request('GET', '/'); sys.exit(0 if c.getresponse().status < 500 else 1)"]
 
 # Run the FastAPI application by default
 CMD ["uvicorn", "koreadertohardcover.web:app", "--host", "0.0.0.0", "--port", "8000"]

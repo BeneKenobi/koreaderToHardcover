@@ -135,3 +135,20 @@ def test_update_progress_skips_finished(client):
 
     # Should succeed (return True) but NOT call any mutations
     assert success is True
+
+
+@respx.mock
+def test_rate_limit_is_retried(client, monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(
+        "koreadertohardcover.hardcover_client.time.sleep", sleeps.append
+    )
+    respx.post("https://api.hardcover.app/v1/graphql").mock(
+        side_effect=[
+            Response(429, headers={"Retry-After": "2"}),
+            Response(200, json={"data": {"me": [{"id": 1, "username": "u"}]}}),
+        ]
+    )
+
+    assert client.get_me() == {"id": 1, "username": "u"}
+    assert sleeps == [2.0]

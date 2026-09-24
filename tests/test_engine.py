@@ -135,6 +135,25 @@ def test_sync_progress_success(MockHC, engine):
     # Get the mock connection from the fixture
     conn = engine.db.get_connection.return_value.__enter__.return_value
     conn.execute.return_value.fetchall.return_value = mock_books
+    conn.execute.return_value.description = [
+        (name,)
+        for name in (
+            "id",
+            "title",
+            "authors",
+            "total_read_pages",
+            "total_pages",
+            "status",
+            "total_read_time",
+            "last_open",
+            "hardcover_id",
+            "edition_id",
+            "fingerprint",
+            "start_date",
+            "last_session_date",
+            "max_page",
+        )
+    ]
 
     # Run Sync
     results = engine.sync_progress(limit=10)
@@ -229,7 +248,7 @@ def test_sync_progress_exception(engine):
     engine.db.get_connection.side_effect = Exception("DB Connection failed")
 
     results = engine.sync_progress()
-    assert results == []
+    assert results is None
 
 
 def test_ingest_from_webdav_cleanup_exception(engine):
