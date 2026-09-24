@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -150,3 +154,21 @@ def test_username_failure_is_not_retried_immediately(client, monkeypatch) -> Non
     assert web.hardcover_username() is None
     assert web.hardcover_username() is None
     assert len(calls) == 1
+
+
+def test_log_defaults_to_database_directory(tmp_path) -> None:
+    """Without LOG_PATH the app must not write into the (read-only) working dir."""
+    env = {k: v for k, v in os.environ.items() if k != "LOG_PATH"}
+    env["DB_PATH"] = str(tmp_path / "db" / "stats.duckdb")
+    (tmp_path / "db").mkdir()
+    workdir = tmp_path / "readonly"
+    workdir.mkdir(mode=0o555)
+
+    subprocess.run(
+        [sys.executable, "-c", "import koreadertohardcover.web"],
+        cwd=workdir,
+        env=env,
+        check=True,
+    )
+
+    assert (tmp_path / "db" / "app.log").exists()

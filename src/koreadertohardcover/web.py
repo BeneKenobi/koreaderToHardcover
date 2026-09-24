@@ -39,8 +39,13 @@ from koreadertohardcover.ranking import (
 from koreadertohardcover.config import Config
 from koreadertohardcover.hardcover_client import HardcoverClient
 
+# Ensure DB path is absolute if not already, or relative to cwd
+db_path = os.getenv("DB_PATH", "reading_stats.duckdb")
+
 # Configure Logging
-log_path = os.getenv("LOG_PATH", "app.log")
+# The log lives next to the database by default: the working directory may not be
+# writable (the Docker image runs as an unprivileged user in a root-owned /app).
+log_path = os.getenv("LOG_PATH") or str(Path(db_path).resolve().parent / "app.log")
 file_handler = RotatingFileHandler(log_path, maxBytes=5 * 1024 * 1024, backupCount=3)
 file_handler.setFormatter(
     logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -60,8 +65,6 @@ logging.getLogger("uvicorn.access").addHandler(file_handler)
 
 # Globals
 config = Config()
-# Ensure DB path is absolute if not already, or relative to cwd
-db_path = os.getenv("DB_PATH", "reading_stats.duckdb")
 engine = SyncEngine(db_path=db_path, config=config)
 templates = Jinja2Templates(
     directory=os.path.join(os.path.dirname(__file__), "templates")

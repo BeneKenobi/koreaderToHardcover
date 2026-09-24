@@ -24,6 +24,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Keep all state in the /data volume; /app is not writable for the app user
+ENV DB_PATH=/data/reading_stats.duckdb \
+    LOG_PATH=/data/app.log
+
 # Fix /data ownership, then run the app as an unprivileged user
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
 
