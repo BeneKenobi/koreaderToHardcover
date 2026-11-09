@@ -43,6 +43,9 @@ def _date_key(value: Any) -> str:
     return value.strftime("%Y-%m-%d")
 
 
+# Bump to rewrite every book's journal once, e.g. after the entry format changed.
+JOURNAL_FORMAT = "2"
+
 DAILY_PROGRESS_SQL = """
     SELECT
         strftime(CAST(rs.start_time AS DATE), '%Y-%m-%d') AS day,
@@ -327,8 +330,16 @@ class SyncEngine:
             days = daily_progress(rows)
             if not days:
                 return
+            # The read on Hardcover uses the rounded-up percentage; the last
+            # day must not show less than that.
+            percentage = progress_percentage(
+                book["total_read_pages"], book["max_page"], book["total_pages"]
+            )
+            last_day, last_fraction = days[-1]
+            days[-1] = (last_day, max(last_fraction, min(percentage, 100) / 100))
             journal_fingerprint = "|".join(
-                [str(book["edition_id"] or "")] + [f"{day}:{f}" for day, f in days]
+                [JOURNAL_FORMAT, str(book["edition_id"] or "")]
+                + [f"{day}:{f}" for day, f in days]
             )
             if not force and book["journal_fingerprint"] == journal_fingerprint:
                 return

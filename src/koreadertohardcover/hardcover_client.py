@@ -474,7 +474,7 @@ class HardcoverClient:
                 pages_was = pages
                 current = by_day.pop(day, [])
                 if not current:
-                    self._execute_query(
+                    res = self._execute_query(
                         insert_gql,
                         {
                             "object": {
@@ -488,11 +488,16 @@ class HardcoverClient:
                             }
                         },
                     )
+                    # Inserts keep only some metadata keys; updates keep all.
+                    new_id = (res.get("insert_reading_journal") or {}).get("id")
+                    if new_id:
+                        self._execute_query(
+                            update_gql, {"id": new_id, "object": {"metadata": metadata}}
+                        )
                     continue
                 keep, extra = current[0], current[1:]
-                if (keep.get("metadata") or {}).get("progress_pages") != pages or (
-                    keep.get("metadata") or {}
-                ).get("user_book_read_id"):
+                stored = keep.get("metadata") or {}
+                if any(stored.get(key) != value for key, value in metadata.items()):
                     self._execute_query(
                         update_gql,
                         {

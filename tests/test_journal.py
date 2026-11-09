@@ -99,7 +99,18 @@ def test_journal_merges_existing_entries() -> None:
             "metadata": {"progress_pages": 99, "user_book_read_id": 7},
         },
         # Already right: untouched. The duplicate on that day goes.
-        {"id": 3, "journal_date": "2026-11-02", "metadata": {"progress_pages": 30}},
+        {
+            "id": 3,
+            "journal_date": "2026-11-02",
+            "metadata": {
+                "progress": 30,
+                "progress_was": 20,
+                "percent_delta": 10,
+                "progress_pages": 30,
+                "progress_pages_was": 20,
+                "pages_delta": 10,
+            },
+        },
         {"id": 4, "journal_date": "2026-11-02", "metadata": {"progress_pages": 30}},
         # Hardcover's entry from a sync after midnight: removed.
         {
@@ -122,7 +133,9 @@ def test_journal_merges_existing_entries() -> None:
         for name in ("InsertJournal", "UpdateJournal", "DeleteJournal"):
             if name in query:
                 calls.append((name, variables))
-                return Response(200, json={"data": {"result": {"id": 9}}})
+                return Response(
+                    200, json={"data": {"insert_reading_journal": {"id": 9}}}
+                )
         return Response(404)
 
     respx.post("https://api.hardcover.app/v1/graphql").mock(side_effect=handler)
@@ -134,6 +147,8 @@ def test_journal_merges_existing_entries() -> None:
         ("UpdateJournal", 2),
         ("DeleteJournal", 4),
         ("InsertJournal", None),
+        # Inserts drop some metadata keys, so they are written again.
+        ("UpdateJournal", 9),
         ("DeleteJournal", 5),
     ]
     assert calls[0][1]["object"]["metadata"]["progress_pages"] == 20
@@ -142,3 +157,19 @@ def test_journal_merges_existing_entries() -> None:
     assert inserted["metadata"]["progress_pages"] == 45
     assert inserted["metadata"]["pages_delta"] == 15
     assert inserted["privacy_setting_id"] == 1
+    assert calls[3][1]["object"]["metadata"] == inserted["metadata"]
+
+
+@patch("koreadertohardcover.engine.HardcoverClient")
+def test_last_day_matches_synced_progress(
+    MockHC: MagicMock, engine: SyncEngine
+) -> None:
+    hc = MockHC.return_value
+    hc.update_progress.return_value = True
+    with engine.db.get_connection() as conn:
+        conn.execute("UPDATE books SET total_read_pages = 70 WHERE id = 'md5_1'")
+
+    engine.sync_progress()
+
+    days = hc.sync_progress_journal.call_args.args[2]
+    assert days == [("2026-11-01", 0.2), ("2026-11-02", 0.35)]
