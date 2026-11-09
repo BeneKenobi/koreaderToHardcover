@@ -360,6 +360,21 @@ class HardcoverClient:
 
         return results
 
+    def _latest_read_id(self, user_book_id: int) -> Optional[int]:
+        """Returns the newest read of a UserBook, which Hardcover may create itself."""
+        gql = """
+        query GetLatestRead($id: Int!) {
+          user_books_by_pk(id: $id) {
+            user_book_reads(order_by: {id: desc}, limit: 1) {
+              id
+            }
+          }
+        }
+        """
+        res = self._execute_query(gql, {"id": user_book_id})
+        reads = (res.get("user_books_by_pk") or {}).get("user_book_reads", [])
+        return reads[0]["id"] if reads else None
+
     def update_progress(
         self,
         book_id: str,
@@ -503,7 +518,10 @@ class HardcoverClient:
                     logger.info("No changes needed (up to date).")
                     return True
 
-            # 2. If no UserBook, create it
+            # 3. Create the UserBook, or set its status and edition, before
+            # writing progress: Hardcover starts a new, empty read when the
+            # edition changes, which would hide progress written before.
+            target_edition_id = e_id if e_id is not None else current_edition
             if not user_book:
                 logger.info("UserBook not found. Creating new entry...")
                 create_ub_gql = """
@@ -519,32 +537,35 @@ class HardcoverClient:
                 )
                 ub_id = res["insert_user_book"]["id"]
                 logger.info(f"Created new UserBook with ID: {ub_id}")
-
-                # Check if a read was auto-created by fetching the new user_book
-                fetch_new_ub = """
-                query GetNewUserBook($id: Int!) {
-                  user_books_by_pk(id: $id) {
-                    user_book_reads(order_by: {id: desc}, limit: 1) {
-                      id
-                    }
+                ubr_id = self._latest_read_id(ub_id)
+            elif current_status != status_id or current_edition != target_edition_id:
+                ub_id = user_book["id"]
+                logger.info(
+                    f"Updating status to '{status_id}' and edition to '{target_edition_id}'..."
+                )
+                update_ub_gql = """
+                mutation UpdateUB($ub_id: Int!, $status_id: Int!, $edition_id: Int) {
+                  update_user_book(id: $ub_id, object: {status_id: $status_id, edition_id: $edition_id}) {
+                    id
                   }
                 }
                 """
-                new_ub_res = self._execute_query(fetch_new_ub, {"id": ub_id})
-                new_ub_reads = (new_ub_res.get("user_books_by_pk") or {}).get(
-                    "user_book_reads", []
+                self._execute_query(
+                    update_ub_gql,
+                    {
+                        "ub_id": ub_id,
+                        "status_id": status_id,
+                        "edition_id": target_edition_id,
+                    },
                 )
-                ubr_id = new_ub_reads[0]["id"] if new_ub_reads else None
-
-                # Since we just created it with these values, update current state to avoid redundant update in Step 6
-                current_status = status_id
-                current_edition = e_id
+                logger.info("Status and edition update successful.")
+                ubr_id = self._latest_read_id(ub_id)
             else:
                 ub_id = user_book["id"]
                 ubr_list = user_book.get("user_book_reads", [])
                 ubr_id = ubr_list[0]["id"] if ubr_list else None
 
-            # 3. If no UserBookRead, create it
+            # 4. If no UserBookRead, create it
             if not ubr_id:
                 logger.info("Creating new reading session...")
                 create_ubr_gql = """
@@ -557,15 +578,15 @@ class HardcoverClient:
                 res = self._execute_query(create_ubr_gql, {"ub_id": ub_id})
                 ubr_id = res["insert_user_book_read"]["id"]
 
-            # 4. Update Progress (Pages & Seconds & Dates)
+            # 5. Update Progress (Pages & Seconds & Dates)
             logger.info(
                 f"Updating reading progress to Page {target_page if total_pages else current_page}..."
             )
             update_ubr_gql = """
             mutation UpdateUBR($ubr_id: Int!, $pages: Int, $seconds: Int, $started_at: date, $finished_at: date) {
               update_user_book_read(id: $ubr_id, object: {
-                progress_pages: $pages, 
-                progress_seconds: $seconds, 
+                progress_pages: $pages,
+                progress_seconds: $seconds,
                 started_at: $started_at,
                 finished_at: $finished_at
               }) {
@@ -593,31 +614,6 @@ class HardcoverClient:
                 },
             )
             logger.info("Progress update successful.")
-
-            # 6. Update Status and Edition (if changed)
-            # If local edition is None, use the current Hardcover edition (preserve it)
-            target_edition_id = e_id if e_id is not None else current_edition
-
-            if current_status != status_id or current_edition != target_edition_id:
-                logger.info(
-                    f"Updating status to '{status_id}' and edition to '{target_edition_id}'..."
-                )
-                update_ub_gql = """
-                mutation UpdateUB($ub_id: Int!, $status_id: Int!, $edition_id: Int) {
-                  update_user_book(id: $ub_id, object: {status_id: $status_id, edition_id: $edition_id}) {
-                    id
-                  }
-                }
-                """
-                self._execute_query(
-                    update_ub_gql,
-                    {
-                        "ub_id": ub_id,
-                        "status_id": status_id,
-                        "edition_id": target_edition_id,
-                    },
-                )
-                logger.info("Status and edition update successful.")
 
             return True
         except Exception as e:

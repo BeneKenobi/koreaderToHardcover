@@ -68,7 +68,7 @@ def test_update_progress(client):
             return Response(200, json={"data": {"books_by_pk": {"pages": 100}}})
         if "GetUserBookInfo" in content:
             return Response(200, json={"data": {"me": [{"user_books": []}]}})
-        elif "GetNewUserBook" in content:
+        elif "GetLatestRead" in content:
             return Response(
                 200,
                 json={"data": {"user_books_by_pk": {"user_book_reads": [{"id": 777}]}}},
@@ -152,3 +152,46 @@ def test_rate_limit_is_retried(client, monkeypatch):
 
     assert client.get_me() == {"id": 1, "username": "u"}
     assert sleeps == [2.0]
+
+
+@respx.mock
+def test_edition_change_writes_progress_to_new_read(client):
+    # Hardcover starts a new, empty read when the edition changes, so the
+    # progress has to go into that read, after the edition switch.
+    calls = []
+
+    def mock_handler(request):
+        content = request.read().decode("utf-8")
+        if "GetEditionPages" in content:
+            return Response(200, json={"data": {"editions_by_pk": {"pages": 100}}})
+        if "GetUserBookInfo" in content:
+            user_book = {
+                "id": 999,
+                "status_id": 1,
+                "edition_id": 10,
+                "user_book_reads": [{"id": 111, "progress_pages": None}],
+            }
+            return Response(200, json={"data": {"me": [{"user_books": [user_book]}]}})
+        if "GetLatestRead" in content:
+            reads = [{"id": 222}]
+            return Response(
+                200, json={"data": {"user_books_by_pk": {"user_book_reads": reads}}}
+            )
+        if "UpdateUBR" in content:
+            calls.append(("UpdateUBR", request.read()))
+            return Response(200, json={"data": {"update_user_book_read": {"id": 222}}})
+        if "UpdateUB" in content:
+            calls.append(("UpdateUB", request.read()))
+            return Response(200, json={"data": {"update_user_book": {"id": 999}}})
+        return Response(404)
+
+    respx.post("https://api.hardcover.app/v1/graphql").mock(side_effect=mock_handler)
+
+    success = client.update_progress(
+        book_id="123", percentage=50, status="reading", edition_id="20"
+    )
+
+    assert success is True
+    assert [name for name, _ in calls] == ["UpdateUB", "UpdateUBR"]
+    assert b'"ubr_id":222' in calls[1][1].replace(b" ", b"")
+    assert b'"pages":50' in calls[1][1].replace(b" ", b"")
