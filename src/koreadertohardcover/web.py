@@ -387,6 +387,30 @@ async def trigger_sync(request: Request, background_tasks: BackgroundTasks):
     return RedirectResponse(url="/", status_code=303)
 
 
+@app.post("/books/{book_id}/sync")
+def force_sync_book(request: Request, book_id: str):
+    """Sends one book's progress to Hardcover again, even if nothing changed."""
+    if not sync_lock.acquire(blocking=False):
+        request.session["message"] = "A sync is already running"
+        request.session["message_type"] = "error"
+        return RedirectResponse(url="/", status_code=303)
+    try:
+        results = engine.sync_progress(limit=1, force=True, book_id=book_id)
+    finally:
+        sync_lock.release()
+
+    if not results:
+        request.session["message"] = "Book is not mapped or the sync failed"
+        request.session["message_type"] = "error"
+    elif results[0][1]:
+        request.session["message"] = f"Updated '{results[0][0]}' on Hardcover"
+        request.session["message_type"] = "success"
+    else:
+        request.session["message"] = f"Could not update '{results[0][0]}', see logs"
+        request.session["message_type"] = "error"
+    return RedirectResponse(url="/", status_code=303)
+
+
 @app.get("/logs", response_class=HTMLResponse)
 def view_logs(request: Request):
     """View application logs."""

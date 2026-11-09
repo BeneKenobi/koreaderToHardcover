@@ -199,3 +199,21 @@ def test_confirm_ignores_foreign_cover_url(client) -> None:
     _confirm(c, "https://evil.example/a.jpg")
 
     assert web.engine.db.get_mappings_without_cover()[0][0] == "a"
+
+
+def test_force_sync_book_reports_result(client, monkeypatch) -> None:
+    c, web = client
+    calls = []
+
+    def fake_sync(**kwargs):
+        calls.append(kwargs)
+        return [("Book One", True)]
+
+    monkeypatch.setattr(web.engine, "sync_progress", fake_sync)
+
+    response = c.post("/books/md5_1/sync", auth=AUTH, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert calls == [{"limit": 1, "force": True, "book_id": "md5_1"}]
+    assert not web.sync_lock.locked()
+    assert "Updated &#39;Book One&#39; on Hardcover" in c.get("/", auth=AUTH).text

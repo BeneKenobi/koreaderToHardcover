@@ -131,12 +131,12 @@ class SyncEngine:
             return False
 
     def sync_progress(
-        self, limit: int = 10, force: bool = False
+        self, limit: int = 10, force: bool = False, book_id: Optional[str] = None
     ) -> Optional[List[Tuple[str, bool]]]:
         """
         Syncs the reading progress of recently read, mapped books to Hardcover.
         Returns a list of (book_title, success_boolean) tuples, or None if the
-        sync could not run at all.
+        sync could not run at all. With book_id, only that book is synced.
         """
         if not self.config.HARDCOVER_BEARER_TOKEN:
             logger.warning("HARDCOVER_BEARER_TOKEN not set. Skipping Hardcover sync.")
@@ -160,11 +160,12 @@ class SyncEngine:
                     FROM books b
                     JOIN book_mappings m ON b.id = m.local_book_id
                     LEFT JOIN sync_state s ON b.id = s.local_book_id
+                    WHERE ? IS NULL OR b.id = ?
                     ORDER BY b.last_open DESC
                     LIMIT ?
                 """
 
-                cursor = conn.execute(sql, [limit])
+                cursor = conn.execute(sql, [book_id, book_id, limit])
                 columns = [col[0] for col in cursor.description]
                 recent_books = [dict(zip(columns, row)) for row in cursor.fetchall()]
                 logger.info(

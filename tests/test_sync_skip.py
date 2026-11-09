@@ -130,3 +130,28 @@ def test_broken_book_does_not_stop_the_others(
     results = engine.sync_progress()
 
     assert results == [("No Pages", False), ("Book One", True)]
+
+
+@patch("koreadertohardcover.engine.HardcoverClient")
+def test_force_sync_of_one_book_ignores_fingerprint(
+    MockHC: MagicMock, engine: SyncEngine
+) -> None:
+    hc = MockHC.return_value
+    hc.update_progress.return_value = True
+    with engine.db.get_connection() as conn:
+        conn.execute(
+            "INSERT INTO books (id, title, total_read_pages, total_pages, last_open) "
+            "VALUES ('md5_2', 'Book Two', 10, 100, '2024-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO book_mappings (local_book_id, hardcover_id) "
+            "VALUES ('md5_2', '1002')"
+        )
+    engine.sync_progress()
+    hc.update_progress.reset_mock()
+
+    results = engine.sync_progress(limit=1, force=True, book_id="md5_1")
+
+    assert results == [("Book One", True)]
+    assert hc.update_progress.call_args.args[0] == "1001"
+    assert hc.update_progress.call_args.kwargs["force"] is True
