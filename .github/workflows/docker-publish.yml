@@ -43,6 +43,21 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Only the highest release tag (vX.Y.Z, no pre-release suffix) gets
+      # "latest", so main pushes and older tags never move it.
+      - name: Check if this is the newest release tag
+        id: latest
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git fetch --quiet --tags --force origin
+          newest=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+          if [ "$GITHUB_REF_NAME" = "$newest" ]; then
+            echo "is_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Newest release tag: $newest, this ref: $GITHUB_REF_NAME"
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
@@ -55,7 +70,9 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=sha
-            latest
+            type=raw,value=latest,enable=${{ steps.latest.outputs.is_latest == 'true' }}
+          flavor: |
+            latest=false
 
       - name: Build and push Docker image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
