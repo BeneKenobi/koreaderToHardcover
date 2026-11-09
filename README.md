@@ -91,4 +91,5 @@ Set the following variables in your `.env` file:
 - A book counts as **finished** once at least 98% is read, or when at most 15 pages are left and at least 90% is read (unread back matter).
 - Books already marked *Finished* on Hardcover are not changed again unless you run `sync --force`.
 - The last state sent to Hardcover is stored locally. Books with unchanged local progress are skipped without an API call, so changes made directly on Hardcover (for example removing a book from your shelf) are not noticed until local progress changes. Use `sync --force` to push the current state again.
+- The app writes one *progress* entry per KOReader reading day to the book's Hardcover journal, dated that day. It replaces the progress entries Hardcover creates at sync time from the first reading day on; notes and older entries stay. The scheduled sync covers the 20 most recently read books; run `sync --past 1000` once to add the history of all mapped books. Each "Force sync" button on the dashboard also rewrites that book's journal.
 - The Docker image runs the app as UID/GID 1000 (override with `APP_UID`/`APP_GID`) and takes ownership of `/data` on start.

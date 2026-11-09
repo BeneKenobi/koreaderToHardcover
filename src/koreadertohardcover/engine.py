@@ -43,6 +43,33 @@ def _date_key(value: Any) -> str:
     return value.strftime("%Y-%m-%d")
 
 
+DAILY_PROGRESS_SQL = """
+    SELECT
+        strftime(CAST(rs.start_time AS DATE), '%Y-%m-%d') AS day,
+        max(rs.page / coalesce(nullif(rs.total_pages, 0), b.total_pages)) AS fraction
+    FROM reading_sessions rs
+    JOIN books b ON b.id = rs.book_id
+    WHERE rs.book_id = ? AND coalesce(nullif(rs.total_pages, 0), b.total_pages) > 0
+    GROUP BY day
+    ORDER BY day
+"""
+
+
+def daily_progress(rows: List[Tuple[str, float]]) -> List[Tuple[str, float]]:
+    """
+    Keeps the days on which the furthest point read moved forward, as
+    (day, fraction). Paging back to an earlier page never lowers progress.
+    """
+    days = []
+    furthest = 0.0
+    for day, fraction in rows:
+        fraction = min(fraction or 0.0, 1.0)
+        if fraction > furthest:
+            furthest = fraction
+            days.append((day, round(fraction, 4)))
+    return days
+
+
 def _fingerprint(
     hardcover_id: str,
     edition_id: Optional[str],
@@ -153,7 +180,7 @@ class SyncEngine:
                     SELECT 
                         b.id, b.title, b.authors, b.total_read_pages, b.total_pages, 
                         b.status, b.total_read_time, b.last_open,
-                        m.hardcover_id, m.edition_id, s.fingerprint,
+                        m.hardcover_id, m.edition_id, s.fingerprint, s.journal_fingerprint,
                         (SELECT MIN(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as start_date,
                         (SELECT MAX(start_time) FROM reading_sessions rs WHERE rs.book_id = b.id) as last_session_date,
                         (SELECT MAX(page) FROM reading_sessions rs WHERE rs.book_id = b.id) as max_page
@@ -254,6 +281,7 @@ class SyncEngine:
             logger.info(
                 f"Skipping '{title}' (ID: {hc_id}) - unchanged since last sync."
             )
+            self._sync_journal(hc, conn, book, force)
             return True
 
         logger.info(
@@ -283,4 +311,31 @@ class SyncEngine:
                 "SET fingerprint = excluded.fingerprint, synced_at = excluded.synced_at",
                 [b_id, fingerprint],
             )
+            self._sync_journal(hc, conn, book, force)
         return success
+
+    def _sync_journal(
+        self, hc: HardcoverClient, conn: Any, book: Dict[str, Any], force: bool
+    ) -> None:
+        """
+        Writes one journal progress entry per KOReader reading day. Runs after
+        the progress update, so it also replaces the entry Hardcover created
+        for that update. A failure is logged and retried on the next sync.
+        """
+        try:
+            rows = conn.execute(DAILY_PROGRESS_SQL, [book["id"]]).fetchall()
+            days = daily_progress(rows)
+            if not days:
+                return
+            journal_fingerprint = "|".join(
+                [str(book["edition_id"] or "")] + [f"{day}:{f}" for day, f in days]
+            )
+            if not force and book["journal_fingerprint"] == journal_fingerprint:
+                return
+            if hc.sync_progress_journal(book["hardcover_id"], book["edition_id"], days):
+                conn.execute(
+                    "UPDATE sync_state SET journal_fingerprint = ? WHERE local_book_id = ?",
+                    [journal_fingerprint, book["id"]],
+                )
+        except Exception as e:
+            logger.error(f"Failed to sync journal for '{book['title']}': {e}")

@@ -146,6 +146,10 @@ class DatabaseManager:
             conn.execute(
                 "ALTER TABLE book_mappings ADD COLUMN IF NOT EXISTS image_url VARCHAR"
             )
+            # Daily reading progress last written to the Hardcover journal.
+            conn.execute(
+                "ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS journal_fingerprint VARCHAR"
+            )
 
     def check_health(self) -> Optional[str]:
         """Returns None if all tables are readable, otherwise an error description."""

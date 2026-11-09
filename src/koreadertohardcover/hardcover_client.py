@@ -2,7 +2,7 @@ import logging
 import math
 import time
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -14,6 +14,9 @@ try:
     USER_AGENT = f"koreadertohardcover/{version('koreadertohardcover')}"
 except PackageNotFoundError:
     USER_AGENT = "koreadertohardcover"
+
+# Same visibility as the journal entries Hardcover creates itself.
+JOURNAL_PRIVACY_SETTING_ID = 1
 
 
 class HardcoverClient:
@@ -34,6 +37,7 @@ class HardcoverClient:
         }
         # One client per HardcoverClient, so consecutive queries reuse the connection.
         self._http = httpx.Client(timeout=30.0, headers=self.headers)
+        self._user_id: Optional[int] = None
 
     def close(self) -> None:
         self._http.close()
@@ -377,6 +381,145 @@ class HardcoverClient:
         reads = (res.get("user_books_by_pk") or {}).get("user_book_reads", [])
         return reads[0] if reads else None
 
+    def _total_pages(self, book_id: int, edition_id: Optional[int]) -> Optional[int]:
+        """Page count of the edition, or of the book when the edition has none."""
+        if edition_id:
+            edition_gql = (
+                "query GetEditionPages($id: Int!) { editions_by_pk(id: $id) { pages } }"
+            )
+            ed_res = self._execute_query(edition_gql, {"id": edition_id})
+            pages = (ed_res.get("editions_by_pk") or {}).get("pages")
+            if pages:
+                return pages
+        book_gql = "query GetBookPages($id: Int!) { books_by_pk(id: $id) { pages } }"
+        bk_res = self._execute_query(book_gql, {"id": book_id})
+        return (bk_res.get("books_by_pk") or {}).get("pages")
+
+    def sync_progress_journal(
+        self,
+        book_id: str,
+        edition_id: Optional[str],
+        days: List[Tuple[str, float]],
+    ) -> bool:
+        """
+        Makes the book's "progress_updated" journal hold one entry per reading
+        day. days lists (YYYY-MM-DD, read fraction) in date order.
+
+        Existing progress entries on those days are updated or merged into one.
+        Entries Hardcover created by itself (they carry a user_book_read_id) from
+        the first reading day on are removed, since the daily entries replace
+        them. Older or hand-written entries stay.
+        """
+        b_id = int(book_id)
+        e_id = int(edition_id) if edition_id else None
+        try:
+            if self._user_id is None:
+                self._user_id = self.get_me().get("id")
+            user_id = self._user_id
+            if not user_id:
+                logger.error("Journal sync: could not determine the Hardcover user.")
+                return False
+            total_pages = self._total_pages(b_id, e_id)
+            if not total_pages:
+                logger.info(f"Journal sync skipped for book {b_id}: no page count.")
+                return True
+
+            existing_gql = """
+            query ProgressJournals($user_id: Int!, $book_id: Int!) {
+              reading_journals(
+                where: {user_id: {_eq: $user_id}, book_id: {_eq: $book_id}, event: {_eq: "progress_updated"}}
+                order_by: {id: asc}
+              ) {
+                id
+                journal_date
+                edition_id
+                metadata
+              }
+            }
+            """
+            res = self._execute_query(
+                existing_gql, {"user_id": user_id, "book_id": b_id}
+            )
+            by_day: Dict[str, List[Dict[str, Any]]] = {}
+            for entry in res.get("reading_journals", []):
+                by_day.setdefault(entry.get("journal_date") or "", []).append(entry)
+
+            insert_gql = """
+            mutation InsertJournal($object: ReadingJournalCreateType!) {
+              insert_reading_journal(object: $object) { id errors }
+            }
+            """
+            update_gql = """
+            mutation UpdateJournal($id: Int!, $object: ReadingJournalUpdateType!) {
+              update_reading_journal(id: $id, object: $object) { id errors }
+            }
+            """
+            delete_gql = """
+            mutation DeleteJournal($id: Int!) {
+              delete_reading_journal(id: $id) { id }
+            }
+            """
+
+            pages_was = 0
+            for day, fraction in days:
+                pages = min(math.ceil(total_pages * fraction), total_pages)
+                metadata = {
+                    "progress": round(pages / total_pages * 100),
+                    "progress_was": round(pages_was / total_pages * 100),
+                    "percent_delta": round((pages - pages_was) / total_pages * 100),
+                    "progress_pages": pages,
+                    "progress_pages_was": pages_was,
+                    "pages_delta": pages - pages_was,
+                }
+                pages_was = pages
+                current = by_day.pop(day, [])
+                if not current:
+                    self._execute_query(
+                        insert_gql,
+                        {
+                            "object": {
+                                "book_id": b_id,
+                                "edition_id": e_id,
+                                "event": "progress_updated",
+                                "action_at": day,
+                                "privacy_setting_id": JOURNAL_PRIVACY_SETTING_ID,
+                                "tags": [],
+                                "metadata": metadata,
+                            }
+                        },
+                    )
+                    continue
+                keep, extra = current[0], current[1:]
+                if (keep.get("metadata") or {}).get("progress_pages") != pages or (
+                    keep.get("metadata") or {}
+                ).get("user_book_read_id"):
+                    self._execute_query(
+                        update_gql,
+                        {
+                            "id": keep["id"],
+                            "object": {
+                                "action_at": day,
+                                "edition_id": e_id,
+                                "metadata": metadata,
+                            },
+                        },
+                    )
+                for entry in extra:
+                    self._execute_query(delete_gql, {"id": entry["id"]})
+
+            first_day = days[0][0] if days else None
+            for day, entries in by_day.items():
+                for entry in entries:
+                    automatic = (entry.get("metadata") or {}).get("user_book_read_id")
+                    if automatic and first_day and day >= first_day:
+                        self._execute_query(delete_gql, {"id": entry["id"]})
+
+            logger.info(f"Journal synced for book {b_id}: {len(days)} reading days.")
+            return True
+        except Exception as e:
+            logger.error(f"Error syncing journal for book {book_id}: {e}")
+            return False
+
     def update_progress(
         self,
         book_id: str,
@@ -398,21 +541,7 @@ class HardcoverClient:
         try:
             # 1. Get Book/Edition total pages
             logger.info(f"Fetching page count for Book ID {b_id} (Edition: {e_id})...")
-            total_pages = None
-            if e_id:
-                edition_gql = "query GetEditionPages($id: Int!) { editions_by_pk(id: $id) { pages } }"
-                ed_res = self._execute_query(edition_gql, {"id": e_id})
-                if ed_res.get("editions_by_pk"):
-                    total_pages = ed_res["editions_by_pk"].get("pages")
-
-            if not total_pages:
-                book_gql = (
-                    "query GetBookPages($id: Int!) { books_by_pk(id: $id) { pages } }"
-                )
-                bk_res = self._execute_query(book_gql, {"id": b_id})
-                if bk_res.get("books_by_pk"):
-                    total_pages = bk_res["books_by_pk"].get("pages")
-
+            total_pages = self._total_pages(b_id, e_id)
             logger.info(f"Found total pages: {total_pages}")
 
             # 2. Get UserBook info

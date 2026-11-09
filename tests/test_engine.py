@@ -204,8 +204,8 @@ def test_sync_progress_success(MockHC, engine):
     )
 
     # Verify DB Updates (sync_status set to 'synced', fingerprint stored)
-    # execute is called 1 (select) + 3 (updates) + 3 (fingerprints) = 7 times
-    assert conn.execute.call_count == 7
+    # execute is called 1 (select) + 3 x (update, fingerprint, daily progress) = 10
+    assert conn.execute.call_count == 10
     conn.execute.assert_any_call(
         "UPDATE books SET sync_status = 'synced', updated_at = now() "
         "WHERE id = ? AND sync_status IS DISTINCT FROM 'synced'",
