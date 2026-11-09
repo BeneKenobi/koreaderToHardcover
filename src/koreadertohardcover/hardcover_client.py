@@ -360,20 +360,22 @@ class HardcoverClient:
 
         return results
 
-    def _latest_read_id(self, user_book_id: int) -> Optional[int]:
+    def _latest_read(self, user_book_id: int) -> Optional[Dict[str, Any]]:
         """Returns the newest read of a UserBook, which Hardcover may create itself."""
         gql = """
         query GetLatestRead($id: Int!) {
           user_books_by_pk(id: $id) {
             user_book_reads(order_by: {id: desc}, limit: 1) {
               id
+              progress_pages
+              finished_at
             }
           }
         }
         """
         res = self._execute_query(gql, {"id": user_book_id})
         reads = (res.get("user_books_by_pk") or {}).get("user_book_reads", [])
-        return reads[0]["id"] if reads else None
+        return reads[0] if reads else None
 
     def update_progress(
         self,
@@ -537,9 +539,31 @@ class HardcoverClient:
                 )
                 ub_id = res["insert_user_book"]["id"]
                 logger.info(f"Created new UserBook with ID: {ub_id}")
-                ubr_id = self._latest_read_id(ub_id)
+                latest = self._latest_read(ub_id)
+                ubr_id = latest["id"] if latest else None
             elif current_status != status_id or current_edition != target_edition_id:
                 ub_id = user_book["id"]
+                ubr_list = user_book.get("user_book_reads", [])
+                # Keep reading in the current entry: move an unfinished read to
+                # the new edition instead of letting Hardcover start another one.
+                moved_read_id = None
+                if (
+                    current_edition != target_edition_id
+                    and ubr_list
+                    and not ubr_list[0].get("finished_at")
+                ):
+                    moved_read_id = ubr_list[0]["id"]
+                    move_ubr_gql = """
+                    mutation MoveUBR($ubr_id: Int!, $edition_id: Int) {
+                      update_user_book_read(id: $ubr_id, object: {edition_id: $edition_id}) {
+                        id
+                      }
+                    }
+                    """
+                    self._execute_query(
+                        move_ubr_gql,
+                        {"ubr_id": moved_read_id, "edition_id": target_edition_id},
+                    )
                 logger.info(
                     f"Updating status to '{status_id}' and edition to '{target_edition_id}'..."
                 )
@@ -559,7 +583,28 @@ class HardcoverClient:
                     },
                 )
                 logger.info("Status and edition update successful.")
-                ubr_id = self._latest_read_id(ub_id)
+                latest = self._latest_read(ub_id)
+                ubr_id = latest["id"] if latest else None
+                if (
+                    moved_read_id
+                    and latest
+                    and latest["id"] != moved_read_id
+                    and not latest.get("progress_pages")
+                    and not latest.get("finished_at")
+                ):
+                    logger.info(
+                        f"Deleting empty read {latest['id']} that Hardcover created "
+                        f"for the new edition; read {moved_read_id} continues."
+                    )
+                    delete_ubr_gql = """
+                    mutation DeleteUBR($ubr_id: Int!) {
+                      delete_user_book_read(id: $ubr_id) {
+                        id
+                      }
+                    }
+                    """
+                    self._execute_query(delete_ubr_gql, {"ubr_id": latest["id"]})
+                    ubr_id = moved_read_id
             else:
                 ub_id = user_book["id"]
                 ubr_list = user_book.get("user_book_reads", [])

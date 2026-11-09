@@ -154,14 +154,10 @@ def test_rate_limit_is_retried(client, monkeypatch):
     assert sleeps == [2.0]
 
 
-@respx.mock
-def test_edition_change_writes_progress_to_new_read(client):
-    # Hardcover starts a new, empty read when the edition changes, so the
-    # progress has to go into that read, after the edition switch.
-    calls = []
-
+def _edition_change_handler(calls: list, latest_after_switch: dict):
     def mock_handler(request):
         content = request.read().decode("utf-8")
+        body = content.replace(" ", "")
         if "GetEditionPages" in content:
             return Response(200, json={"data": {"editions_by_pk": {"pages": 100}}})
         if "GetUserBookInfo" in content:
@@ -169,29 +165,66 @@ def test_edition_change_writes_progress_to_new_read(client):
                 "id": 999,
                 "status_id": 1,
                 "edition_id": 10,
-                "user_book_reads": [{"id": 111, "progress_pages": None}],
+                "user_book_reads": [
+                    {"id": 111, "progress_pages": 20, "finished_at": None}
+                ],
             }
             return Response(200, json={"data": {"me": [{"user_books": [user_book]}]}})
         if "GetLatestRead" in content:
-            reads = [{"id": 222}]
+            reads = [latest_after_switch]
             return Response(
                 200, json={"data": {"user_books_by_pk": {"user_book_reads": reads}}}
             )
-        if "UpdateUBR" in content:
-            calls.append(("UpdateUBR", request.read()))
-            return Response(200, json={"data": {"update_user_book_read": {"id": 222}}})
-        if "UpdateUB" in content:
-            calls.append(("UpdateUB", request.read()))
-            return Response(200, json={"data": {"update_user_book": {"id": 999}}})
+        for name in ("MoveUBR", "DeleteUBR", "UpdateUBR", "UpdateUB"):
+            if name in content:
+                calls.append((name, body))
+                return Response(200, json={"data": {"result": {"id": 1}}})
         return Response(404)
 
-    respx.post("https://api.hardcover.app/v1/graphql").mock(side_effect=mock_handler)
+    return mock_handler
+
+
+@respx.mock
+def test_edition_change_keeps_the_current_read(client):
+    # Hardcover starts a new, empty read when the edition changes. The sync
+    # moves the current read to the new edition and drops that empty one.
+    calls = []
+    respx.post("https://api.hardcover.app/v1/graphql").mock(
+        side_effect=_edition_change_handler(
+            calls, {"id": 222, "progress_pages": None, "finished_at": None}
+        )
+    )
 
     success = client.update_progress(
         book_id="123", percentage=50, status="reading", edition_id="20"
     )
 
     assert success is True
-    assert [name for name, _ in calls] == ["UpdateUB", "UpdateUBR"]
-    assert b'"ubr_id":222' in calls[1][1].replace(b" ", b"")
-    assert b'"pages":50' in calls[1][1].replace(b" ", b"")
+    assert [name for name, _ in calls] == [
+        "MoveUBR",
+        "UpdateUB",
+        "DeleteUBR",
+        "UpdateUBR",
+    ]
+    assert '"ubr_id":111,"edition_id":20' in calls[0][1]
+    assert '"ubr_id":222' in calls[2][1]
+    assert '"ubr_id":111' in calls[3][1]
+    assert '"pages":50' in calls[3][1]
+
+
+@respx.mock
+def test_edition_change_without_new_read_deletes_nothing(client):
+    calls = []
+    respx.post("https://api.hardcover.app/v1/graphql").mock(
+        side_effect=_edition_change_handler(
+            calls, {"id": 111, "progress_pages": 20, "finished_at": None}
+        )
+    )
+
+    success = client.update_progress(
+        book_id="123", percentage=50, status="reading", edition_id="20"
+    )
+
+    assert success is True
+    assert [name for name, _ in calls] == ["MoveUBR", "UpdateUB", "UpdateUBR"]
+    assert '"ubr_id":111' in calls[2][1]
