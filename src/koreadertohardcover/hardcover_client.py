@@ -1,5 +1,6 @@
 import logging
 import math
+import threading
 import time
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Dict, List, Optional, Tuple
@@ -24,6 +25,12 @@ class HardcoverClient:
     MAX_RETRIES = 3
     # Used when a 429 response has no usable Retry-After header.
     DEFAULT_RETRY_SECONDS = 10.0
+    # Hardcover allows 60 requests per minute per token; stay below that.
+    MIN_REQUEST_INTERVAL = 1.1
+    # Shared by all clients, so the scheduled sync and web UI searches
+    # together respect the limit.
+    _throttle_lock = threading.Lock()
+    _next_request_at = 0.0
 
     def __init__(self, config: Config):
         self.config = config
@@ -49,11 +56,21 @@ class HardcoverClient:
         except (TypeError, ValueError):
             return self.DEFAULT_RETRY_SECONDS * (attempt + 1)
 
+    def _throttle(self) -> None:
+        """Waits until the next request slot."""
+        cls = HardcoverClient
+        with cls._throttle_lock:
+            wait = cls._next_request_at - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            cls._next_request_at = time.monotonic() + self.MIN_REQUEST_INTERVAL
+
     def _execute_query(
         self, query: str, variables: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         payload = {"query": query, "variables": variables or {}}
         for attempt in range(self.MAX_RETRIES + 1):
+            self._throttle()
             response = self._http.post(self.API_URL, json=payload)
             if (
                 response.status_code == httpx.codes.TOO_MANY_REQUESTS

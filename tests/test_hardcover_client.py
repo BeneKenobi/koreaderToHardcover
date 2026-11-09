@@ -228,3 +228,27 @@ def test_edition_change_without_new_read_deletes_nothing(client):
     assert success is True
     assert [name for name, _ in calls] == ["MoveUBR", "UpdateUB", "UpdateUBR"]
     assert '"ubr_id":111' in calls[2][1]
+
+
+def test_requests_are_spaced_out(client, monkeypatch):
+    clock = [100.0]
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(round(seconds, 3))
+        clock[0] += seconds
+
+    monkeypatch.setattr(HardcoverClient, "MIN_REQUEST_INTERVAL", 1.1)
+    monkeypatch.setattr(HardcoverClient, "_next_request_at", 0.0)
+    monkeypatch.setattr(
+        "koreadertohardcover.hardcover_client.time.monotonic", lambda: clock[0]
+    )
+    monkeypatch.setattr("koreadertohardcover.hardcover_client.time.sleep", sleep)
+
+    client._throttle()
+    clock[0] += 0.5
+    client._throttle()
+    clock[0] += 2.0
+    client._throttle()
+
+    assert sleeps == [0.6]
